@@ -43,25 +43,25 @@ final class SecurityConfigurationTests: XCTestCase {
         configuration.checks = [.jailbreak, .integrity]
         configuration.includesBuiltInIndicators = false
         configuration.scansUnsupportedEnvironments = true
-        configuration.additionalSuspiciousPaths = ["/a", "/b"]
-        configuration.performsSandboxWriteProbe = false
-        configuration.performsForkProbe = false
-        configuration.additionalSuspiciousClasses = ["HideMe"]
-        configuration.probesRemoteShellPorts = false
-        configuration.additionalSuspiciousLibraries = ["evil"]
-        configuration.allowedImagePathPrefixes = ["/opt/"]
-        configuration.reportsUnknownLibraries = false
-        configuration.allowedBundleLibraries = ["Auth.framework/Auth"]
-        configuration.probesInstrumentationPorts = false
-        configuration.protectedMethods = [
+        configuration.jailbreak.additionalSuspiciousPaths = ["/a", "/b"]
+        configuration.jailbreak.performsSandboxWriteProbe = false
+        configuration.jailbreak.performsForkProbe = false
+        configuration.jailbreak.additionalSuspiciousClasses = ["HideMe"]
+        configuration.jailbreak.probesRemoteShellPorts = false
+        configuration.hooking.additionalSuspiciousLibraries = ["evil"]
+        configuration.hooking.allowedImagePathPrefixes = ["/opt/"]
+        configuration.hooking.reportsUnknownLibraries = false
+        configuration.hooking.allowedBundleLibraries = ["Auth.framework/Auth"]
+        configuration.hooking.probesInstrumentationPorts = false
+        configuration.hooking.protectedMethods = [
             .init(className: "Auth", selector: "isLoggedIn", scope: .instance, allowedImagePathPrefixes: ["/app/"]),
             .init(className: "Crypto", selector: "key", scope: .class),
         ]
-        configuration.expectedBundleIdentifier = "com.example.app"
-        configuration.expectedTeamIdentifier = "ABCDE12345"
-        configuration.expectedTextSegmentDigests = ["bb", "aa"]
-        configuration.expectedImageTextDigests = ["Auth.framework/Auth": ["dd", "cc"]]
-        configuration.expectedDistribution = .appStore
+        configuration.integrity.expectedBundleIdentifier = "com.example.app"
+        configuration.integrity.expectedTeamIdentifier = "ABCDE12345"
+        configuration.integrity.expectedTextSegmentDigests = ["bb", "aa"]
+        configuration.integrity.expectedImageTextDigests = ["Auth.framework/Auth": ["dd", "cc"]]
+        configuration.integrity.expectedDistribution = .appStore
 
         let options = configuration.makeScanOptions()
         XCTAssertEqual(options.checks, [.jailbreak, .integrity])
@@ -114,10 +114,21 @@ final class SecurityConfigurationTests: XCTestCase {
         }
     }
 
+    func testFamiliesAreValueTypesWithEquality() {
+        var left = SecurityConfiguration()
+        var right = left
+        XCTAssertEqual(left, right)
+
+        left.integrity.expectedTeamIdentifier = "ABCDE12345"
+        XCTAssertNotEqual(left, right, "a change inside one family must change the whole configuration")
+        right.integrity = left.integrity
+        XCTAssertEqual(left, right, "a family can be copied as one value")
+    }
+
     func testSecurityConfigurationIsSendable() {
         // Compile-time check: handing a configuration to another task must not need `@unchecked`.
         let configuration = SecurityConfiguration()
-        let box: @Sendable () -> Int = { configuration.additionalSuspiciousPaths.count }
+        let box: @Sendable () -> Int = { configuration.jailbreak.additionalSuspiciousPaths.count }
         XCTAssertEqual(box(), 0)
     }
 }

@@ -55,10 +55,58 @@ final class SecurityReportTests: XCTestCase {
         XCTAssertEqual(mixed.highestSeverity, .critical)
     }
 
-    func testAReportWithNoPerformedChecksWasSkipped() {
+    func testAReportCarryingAnEnvironmentThreatWasSkipped() {
         let skipped = report([threat(.simulator, .environment, .info)], performed: [])
         XCTAssertTrue(skipped.wasSkipped)
+        XCTAssertEqual(skipped.skipReason, .simulator)
         XCTAssertFalse(skipped.isCompromised)
+
+        XCTAssertEqual(report([threat(.macRuntime, .environment, .info)], performed: []).skipReason, .macRuntime)
+        XCTAssertEqual(report([threat(.unsupportedPlatform, .environment, .info)], performed: []).skipReason, .unsupportedPlatform)
+    }
+
+    func testNoPerformedChecksAloneIsNotASkip() {
+        let nothingRequested = report([], performed: [])
+        XCTAssertFalse(nothingRequested.wasSkipped)
+        XCTAssertNil(nothingRequested.skipReason)
+    }
+
+    // MARK: - Policies
+
+    func testTheDefaultPolicyMatchesIsCompromised() {
+        for severity in SecurityThreat.Severity.allCases {
+            let single = report([threat(.jailbreakArtifact, .jailbreak, severity)])
+            XCTAssertEqual(single.isCompromised(under: .default), single.isCompromised, "\(severity)")
+        }
+    }
+
+    func testAPolicyCanLowerTheThreshold() {
+        let proxyOnly = report([threat(.networkProxy, .network, .medium)])
+        XCTAssertFalse(proxyOnly.isCompromised)
+        XCTAssertTrue(proxyOnly.isCompromised(under: SecurityPolicy(minimumSeverity: .medium)))
+    }
+
+    func testAPolicyCanIgnoreAKind() {
+        let debugger = report([threat(.debuggerAttached, .debugger, .high)])
+        XCTAssertTrue(debugger.isCompromised)
+        XCTAssertFalse(debugger.isCompromised(under: SecurityPolicy(ignoredKinds: [.debuggerAttached])))
+    }
+
+    func testAPolicyCanEscalateAKind() {
+        let proxyOnly = report([threat(.networkProxy, .network, .medium)])
+        XCTAssertTrue(proxyOnly.isCompromised(under: SecurityPolicy(escalatedKinds: [.networkProxy])))
+    }
+
+    func testIgnoringWinsOverEscalating() {
+        let proxyOnly = report([threat(.networkProxy, .network, .medium)])
+        let contradictory = SecurityPolicy(ignoredKinds: [.networkProxy], escalatedKinds: [.networkProxy])
+        XCTAssertFalse(proxyOnly.isCompromised(under: contradictory))
+    }
+
+    func testEnvironmentThreatsNeverCompromiseUnderAnyPolicy() {
+        let skipped = report([threat(.simulator, .environment, .info)], performed: [])
+        let everything = SecurityPolicy(minimumSeverity: .info, escalatedKinds: [.simulator])
+        XCTAssertFalse(skipped.isCompromised(under: everything))
     }
 
     func testFilteringByCategoryAndKind() {

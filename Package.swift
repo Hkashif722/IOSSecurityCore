@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 
 //
 //  Package.swift
@@ -44,13 +44,11 @@ let package = Package(
                 // CFNetworkCopySystemProxySettings (network checks).
                 .linkedFramework("CFNetwork")
             ]),
-        // Swift layer: idiomatic, Sendable, async-first facade over the Objective-C layer.
+        // Swift layer: idiomatic, Sendable, async-first facade over the Objective-C layer. Swift 6 language
+        // mode (the tools-version default), so data races are compile errors.
         .target(
             name: "IOSSecurityCore",
-            dependencies: ["IOSSecurityCoreObjC"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency")
-            ]),
+            dependencies: ["IOSSecurityCoreObjC"]),
         .testTarget(
             name: "IOSSecurityCoreTests",
             dependencies: ["IOSSecurityCore", "IOSSecurityCoreObjC"]),

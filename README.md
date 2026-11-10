@@ -16,7 +16,7 @@ re-signed or patched copy, or behind an intercepting proxy, so **your app** can 
 
 ## Requirements
 
-iOS 16.0+, Swift 5.9+, Xcode 15+.
+iOS 16.0+, Swift 6.0+, Xcode 16+.
 
 ## Installation
 
@@ -39,10 +39,10 @@ import IOSSecurityCore
 
 // 1. Tell the engine what your app should look like (every field is optional).
 var configuration = SecurityConfiguration()
-configuration.expectedBundleIdentifier = "com.example.app"
-configuration.expectedTeamIdentifier = "ABCDE12345"
+configuration.integrity.expectedBundleIdentifier = "com.example.app"
+configuration.integrity.expectedTeamIdentifier = "ABCDE12345"
 #if !DEBUG
-configuration.expectedDistribution = .appStore   // release builds only
+configuration.integrity.expectedDistribution = .appStore   // release builds only
 #endif
 SecurityEngine.shared.configure(configuration)
 
@@ -56,15 +56,20 @@ SecurityEngine.shared.evaluate { report in
 // 3. Or with async/await, and keep watching: debuggers attach after launch.
 let report = await SecurityEngine.shared.evaluate()
 for await report in SecurityEngine.shared.monitor(interval: 30) { … }
+
+// 4. Or observe every report the engine produces, wherever it was requested.
+for await report in SecurityEngine.shared.reports where report.isCompromised { … }
 ```
 
 A `SecurityReport` holds `threats`, each with a stable numeric `kind`, a `category`, a `severity`
 (`info` … `critical`) and a dotted `identifier` such as `jailbreak.artifact`. `isCompromised` is true when any
 threat is `high` or `critical`. Heuristics (unknown libraries, odd threads) are deliberately `medium` or
-lower, so many weak signals never add up to a lock-out.
+lower, so many weak signals never add up to a lock-out. That rule is `SecurityPolicy.default`; a stricter or
+looser one is a value you pass to `report.isCompromised(under:)` (see "Deciding what to do").
 
 On the Simulator, on macOS and under Mac Catalyst the checks are **skipped**, not failed: the report contains
-one `info` threat and `wasSkipped == true`.
+one `info` threat, `wasSkipped == true` and `skipReason` says why (`.simulator`, `.macRuntime`,
+`.unsupportedPlatform`).
 
 ## What it checks
 
@@ -83,7 +88,7 @@ found nothing is only meaningful when the calls it made were not intercepted.
 ### Protect your own methods
 
 ```swift
-configuration.protectedMethods = [
+configuration.hooking.protectedMethods = [
     .init(className: "MyApp.AuthManager", selector: "isUserAuthenticated"),
 ]
 ```
@@ -103,7 +108,7 @@ A bypass tweak can hide its files and its library, but not its Objective-C class
 tools you care about (Shadow's are built in):
 
 ```swift
-configuration.additionalSuspiciousClasses = ["SomeBypassTweakController"]
+configuration.jailbreak.additionalSuspiciousClasses = ["SomeBypassTweakController"]
 ```
 
 ### Catch injected dylibs
@@ -112,7 +117,7 @@ List every dynamic library you embed. Any other image loaded from inside the app
 the effective defence against a repackaged app with an injected dylib:
 
 ```swift
-configuration.allowedBundleLibraries = ["Auth.framework/Auth", "libFoo.dylib"]
+configuration.hooking.allowedBundleLibraries = ["Auth.framework/Auth", "libFoo.dylib"]
 ```
 
 ### Verify the code itself
@@ -121,14 +126,14 @@ configuration.allowedBundleLibraries = ["Auth.framework/Auth", "libFoo.dylib"]
 swift Scripts/text-digest.swift path/to/YourApp.app/YourApp
 ```
 
-Put the printed digest in `configuration.expectedTextSegmentDigests`. Hashing reads the whole code section, so
+Put the printed digest in `configuration.integrity.expectedTextSegmentDigests`. Hashing reads the whole code section, so
 use it in release builds only, and compute it from the binary your users run (for App Store builds, print
 `IntegritySignals.textSegmentDigest` from a TestFlight build).
 
 Embedded dynamic frameworks work the same way, keyed by their trailing path components:
 
 ```swift
-configuration.expectedImageTextDigests = ["Auth.framework/Auth": ["3f1c…"]]
+configuration.integrity.expectedImageTextDigests = ["Auth.framework/Auth": ["3f1c…"]]
 // From a TestFlight build: await SecurityEngine.shared.textSegmentDigest(ofImageNamed: "Auth.framework/Auth")
 ```
 
@@ -140,6 +145,16 @@ signal and make the decision where it cannot be tampered with:
 ```swift
 let signals = await SecurityEngine.shared.integritySignals(includingTextDigest: true)
 // `IntegritySignals` and `SecurityReport` are Codable: send them, with an App Attest assertion, to your server.
+```
+
+When the decision has to be made on the device, make it with a `SecurityPolicy` rather than by reading
+severities yourself. The policy is a value, so a payments screen can be stricter than the rest of the app:
+
+```swift
+var strict = SecurityPolicy()                 // high or critical, like `isCompromised`
+strict.escalatedKinds = [.networkProxy]       // a proxy is disqualifying here, although it is only medium
+strict.ignoredKinds = [.debuggerUnexpectedParent]
+if report.isCompromised(under: strict) { … }
 ```
 
 For Objective-C, `ISCSecurityScanner` offers the same through `ISCScanOptions`.

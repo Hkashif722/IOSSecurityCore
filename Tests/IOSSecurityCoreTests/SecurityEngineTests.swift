@@ -6,7 +6,6 @@
 //  Copyright © 2026 Kashif Hussain. MIT License.
 //
 
-import Combine
 import XCTest
 @_spi(Testing) @testable import IOSSecurityCore
 
@@ -28,11 +27,11 @@ final class SecurityEngineTests: XCTestCase {
         var configuration = SecurityConfiguration()
         configuration.includesBuiltInIndicators = false
         configuration.scansUnsupportedEnvironments = true
-        configuration.performsSandboxWriteProbe = false
-        configuration.performsForkProbe = false
-        configuration.probesInstrumentationPorts = false
-        configuration.probesRemoteShellPorts = false
-        configuration.reportsUnknownLibraries = false
+        configuration.jailbreak.performsSandboxWriteProbe = false
+        configuration.jailbreak.performsForkProbe = false
+        configuration.jailbreak.probesRemoteShellPorts = false
+        configuration.hooking.probesInstrumentationPorts = false
+        configuration.hooking.reportsUnknownLibraries = false
         return configuration
     }
 
@@ -43,15 +42,25 @@ final class SecurityEngineTests: XCTestCase {
         let report = await SecurityEngine().evaluate()
 
         XCTAssertTrue(report.wasSkipped)
+        XCTAssertNotNil(report.skipReason)
         XCTAssertFalse(report.isCompromised, "a Simulator or Mac must never look compromised")
         XCTAssertEqual(report.threats.count, 1)
         XCTAssertEqual(report.threats.first?.category, .environment)
         XCTAssertEqual(report.threats.first?.severity, .info)
         #if targetEnvironment(simulator)
+        XCTAssertEqual(report.skipReason, .simulator)
         XCTAssertTrue(report.contains(.simulator))
         #elseif os(macOS)
+        XCTAssertEqual(report.skipReason, .unsupportedPlatform)
         XCTAssertTrue(report.contains(.unsupportedPlatform))
         #endif
+    }
+
+    func testRequestingNoChecksIsNotASkip() async {
+        let report = await SecurityEngine(configuration: isolatedConfiguration()).evaluate(checks: [])
+        XCTAssertTrue(report.performedChecks.isEmpty)
+        XCTAssertFalse(report.wasSkipped, "nothing ran, but not because of the platform")
+        XCTAssertNil(report.skipReason)
     }
 
     // MARK: - Detection through the Swift API
@@ -61,7 +70,7 @@ final class SecurityEngineTests: XCTestCase {
         try Data("x".utf8).write(to: marker)
 
         var configuration = isolatedConfiguration()
-        configuration.additionalSuspiciousPaths = [marker.path]
+        configuration.jailbreak.additionalSuspiciousPaths = [marker.path]
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.jailbreak])
 
         XCTAssertTrue(report.contains(.jailbreakArtifact))
@@ -74,7 +83,7 @@ final class SecurityEngineTests: XCTestCase {
 
     func testNoIndicatorMeansACleanReport() async {
         var configuration = isolatedConfiguration()
-        configuration.additionalSuspiciousPaths = [scratch.appendingPathComponent("absent").path]
+        configuration.jailbreak.additionalSuspiciousPaths = [scratch.appendingPathComponent("absent").path]
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.jailbreak])
 
         XCTAssertTrue(report.threats.isEmpty)
@@ -86,7 +95,7 @@ final class SecurityEngineTests: XCTestCase {
         let marker = scratch.appendingPathComponent("marker")
         try Data("x".utf8).write(to: marker)
         var configuration = isolatedConfiguration()
-        configuration.additionalSuspiciousPaths = [marker.path]
+        configuration.jailbreak.additionalSuspiciousPaths = [marker.path]
 
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.hooking])
         XCTAssertEqual(report.performedChecks, [.hooking])
@@ -102,7 +111,7 @@ final class SecurityEngineTests: XCTestCase {
 
     func testCustomSuspiciousClassesAreReportedAsABypassTool() async {
         var configuration = isolatedConfiguration()
-        configuration.additionalSuspiciousClasses = ["NSObject"]
+        configuration.jailbreak.additionalSuspiciousClasses = ["NSObject"]
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.jailbreak])
         XCTAssertTrue(report.contains(.jailbreakBypassTool))
         XCTAssertEqual(report.threats(in: .jailbreak).first?.identifier, "jailbreak.bypass_tool")
@@ -114,7 +123,7 @@ final class SecurityEngineTests: XCTestCase {
         XCTAssertNil(missing)
 
         var configuration = isolatedConfiguration()
-        configuration.expectedImageTextDigests = ["NoSuchLibrary.framework/NoSuchLibrary": ["00"]]
+        configuration.integrity.expectedImageTextDigests = ["NoSuchLibrary.framework/NoSuchLibrary": ["00"]]
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.integrity])
         XCTAssertTrue(report.contains(.integrityImageUnavailable))
         XCTAssertFalse(report.isCompromised)
@@ -122,7 +131,7 @@ final class SecurityEngineTests: XCTestCase {
 
     func testIntegrityExpectationsAreEnforced() async {
         var configuration = isolatedConfiguration()
-        configuration.expectedBundleIdentifier = "com.definitely.not.this.app"
+        configuration.integrity.expectedBundleIdentifier = "com.definitely.not.this.app"
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.integrity])
         XCTAssertTrue(report.contains(.integrityBundleIdentifierMismatch))
         XCTAssertEqual(report.highestSeverity, .critical)
@@ -130,7 +139,7 @@ final class SecurityEngineTests: XCTestCase {
 
     func testProtectedMethodsAreEnforced() async {
         var configuration = isolatedConfiguration()
-        configuration.protectedMethods = [
+        configuration.hooking.protectedMethods = [
             .init(className: "NSObject", selector: "description", allowedImagePathPrefixes: ["/nonexistent/"]),
         ]
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.hooking])
@@ -148,9 +157,9 @@ final class SecurityEngineTests: XCTestCase {
         XCTAssertTrue(before.threats.isEmpty)
 
         var changed = isolatedConfiguration()
-        changed.additionalSuspiciousPaths = [marker.path]
-        engine.configure(changed)
-        XCTAssertEqual(engine.configuration.additionalSuspiciousPaths, [marker.path])
+        changed.jailbreak.additionalSuspiciousPaths = [marker.path]
+        engine.configuration = changed
+        XCTAssertEqual(engine.configuration.jailbreak.additionalSuspiciousPaths, [marker.path])
 
         let after = await engine.evaluate(checks: [.jailbreak])
         XCTAssertTrue(after.contains(.jailbreakArtifact))
@@ -160,7 +169,7 @@ final class SecurityEngineTests: XCTestCase {
         let marker = scratch.appendingPathComponent("marker")
         try Data("x".utf8).write(to: marker)
         var withMarker = isolatedConfiguration()
-        withMarker.additionalSuspiciousPaths = [marker.path]
+        withMarker.jailbreak.additionalSuspiciousPaths = [marker.path]
 
         let engine = SecurityEngine(configuration: withMarker)
         let finished = expectation(description: "completion")
@@ -230,11 +239,12 @@ final class SecurityEngineTests: XCTestCase {
 
     func testConfiguringWhileEvaluatingIsSafe() async {
         let engine = SecurityEngine(configuration: isolatedConfiguration())
+        let replacement = isolatedConfiguration()
         await withTaskGroup(of: Void.self) { group in
             for index in 0..<30 {
                 group.addTask {
                     if index.isMultiple(of: 3) {
-                        engine.configure(self.isolatedConfiguration())
+                        engine.configuration = replacement
                     } else {
                         _ = await engine.evaluate()
                     }
@@ -243,7 +253,14 @@ final class SecurityEngineTests: XCTestCase {
         }
     }
 
-    // MARK: - Monitoring and publishing
+    func testTheEngineIsSendable() {
+        // Compile-time check: the engine crosses isolation boundaries without `@unchecked`.
+        let engine = SecurityEngine(configuration: isolatedConfiguration())
+        let box: @Sendable () -> SecurityEngine = { engine }
+        XCTAssertTrue(box() === engine)
+    }
+
+    // MARK: - Monitoring and observing
 
     func testMonitoringReportsImmediatelyThenPeriodically() async {
         let engine = SecurityEngine(configuration: isolatedConfiguration())
@@ -283,18 +300,67 @@ final class SecurityEngineTests: XCTestCase {
         XCTAssertGreaterThan(times[1].timeIntervalSince(times[0]), 0.9, "intervals below one second are raised to one")
     }
 
-    func testThePublisherReceivesEveryReport() async {
+    func testTheReportSequenceDeliversEveryReportWhileItIsIterated() async {
         let engine = SecurityEngine(configuration: isolatedConfiguration())
-        let received = Locked<[SecurityReport]>([])
-        let cancellable = engine.reports.sink { report in
-            received.withLock { $0.append(report) }
-        }
-        _ = await engine.evaluate()
-        _ = await engine.evaluate(checks: [.debugger])
-        cancellable.cancel()
-        _ = await engine.evaluate()
+        XCTAssertEqual(engine.reportSubscriberCount, 0)
 
-        XCTAssertEqual(received.value.count, 2, "reports after cancelling must not be delivered")
+        // Making the iterator is what subscribes, so the two evaluations below are delivered to it.
+        var iterator: SecurityEngine.Reports.Iterator? = engine.reports.makeAsyncIterator()
+        XCTAssertEqual(engine.reportSubscriberCount, 1)
+
+        let first = await engine.evaluate()
+        let second = await engine.evaluate(checks: [.debugger])
+        let receivedFirst = await iterator?.next()
+        let receivedSecond = await iterator?.next()
+        XCTAssertEqual(receivedFirst, first)
+        XCTAssertEqual(receivedSecond, second)
+
+        iterator = nil
+        XCTAssertEqual(engine.reportSubscriberCount, 0, "dropping the iterator unsubscribes")
+        _ = await engine.evaluate()
+    }
+
+    func testEveryIterationOfReportsIsItsOwnSubscription() async {
+        let engine = SecurityEngine(configuration: isolatedConfiguration())
+        let reports = engine.reports
+        var one: SecurityEngine.Reports.Iterator? = reports.makeAsyncIterator()
+        var two: SecurityEngine.Reports.Iterator? = reports.makeAsyncIterator()
+        XCTAssertEqual(engine.reportSubscriberCount, 2)
+
+        let report = await engine.evaluate()
+        let fromOne = await one?.next()
+        let fromTwo = await two?.next()
+        XCTAssertEqual(fromOne, report)
+        XCTAssertEqual(fromTwo, report)
+
+        one = nil
+        two = nil
+        XCTAssertEqual(engine.reportSubscriberCount, 0)
+    }
+
+    func testCancellingAReportConsumerEndsItsSubscription() async {
+        let engine = SecurityEngine(configuration: isolatedConfiguration())
+        let subscribed = expectation(description: "subscribed")
+        let consumer = Task {
+            var count = 0
+            for await _ in engine.reports {
+                count += 1
+            }
+            return count
+        }
+        // The subscription exists once the loop has asked for its first element.
+        Task {
+            while engine.reportSubscriberCount == 0 {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            subscribed.fulfill()
+        }
+        await fulfillment(of: [subscribed], timeout: 10)
+
+        _ = await engine.evaluate()
+        consumer.cancel()
+        _ = await consumer.value // returns only if cancelling ends the sequence
+        XCTAssertEqual(engine.reportSubscriberCount, 0)
     }
 
     // MARK: - Raw signals and utilities

@@ -6,7 +6,6 @@
 //  Copyright © 2026 Kashif Hussain. MIT License.
 //
 
-import Combine
 import Foundation
 import IOSSecurityCoreObjC
 import os
@@ -27,13 +26,14 @@ import os
 ///
 /// // A debugger can attach at any time, so keep watching.
 /// for await report in SecurityEngine.shared.monitor() { … }
+///
+/// // Or observe every report the engine produces, wherever it was requested.
+/// for await report in SecurityEngine.shared.reports { … }
 /// ```
 ///
-/// The engine only *reports*. What to do about a compromised device is the host app's decision, and the
-/// strongest version of that decision is made on a server.
-// `@unchecked` covers one member only: `reportSubject`. Combine's `PassthroughSubject` is not `Sendable`,
-// and every `send` happens on the serial `queue`. Everything else is a `let` or lives inside the lock.
-public final class SecurityEngine: @unchecked Sendable {
+/// The engine only *reports*. What to do about a compromised device is the host app's decision (see
+/// ``SecurityPolicy``), and the strongest version of that decision is made on a server.
+public final class SecurityEngine: Sendable {
 
     /// The package version.
     public static let version = "1.0.0"
@@ -41,31 +41,40 @@ public final class SecurityEngine: @unchecked Sendable {
     /// A shared engine for apps that need only one.
     public static let shared = SecurityEngine()
 
-    private let storedConfiguration: OSAllocatedUnfairLock<SecurityConfiguration>
+    /// Everything that changes after `init`, behind one lock.
+    private struct State {
+        var configuration: SecurityConfiguration
+        var subscribers: [UUID: AsyncStream<SecurityReport>.Continuation] = [:]
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
     private let queue = DispatchQueue(label: "IOSSecurityCore.scan", qos: .utility)
-    private let reportSubject = PassthroughSubject<SecurityReport, Never>()
 
     /// Creates an engine.
-    /// - Parameter configuration: The initial configuration. Change it later with ``configure(_:)``.
+    /// - Parameter configuration: The initial configuration. Change it later through ``configuration``.
     public init(configuration: SecurityConfiguration = .default) {
-        storedConfiguration = OSAllocatedUnfairLock(initialState: configuration)
+        state = OSAllocatedUnfairLock(initialState: State(configuration: configuration))
     }
 
     // MARK: - Configuration
 
-    /// The configuration in effect.
+    /// The configuration in effect. Evaluations that already started keep the one they began with.
     public var configuration: SecurityConfiguration {
-        storedConfiguration.withLock { $0 }
+        get { state.withLock { $0.configuration } }
+        set { state.withLock { $0.configuration = newValue } }
     }
 
-    /// Replaces the configuration. Evaluations that already started keep the one they began with.
+    /// Replaces the configuration. The same as assigning ``configuration``.
     public func configure(_ configuration: SecurityConfiguration) {
-        storedConfiguration.withLock { $0 = configuration }
+        self.configuration = configuration
     }
 
     // MARK: - Evaluation
 
     /// Evaluates the environment off the calling thread and returns the report.
+    ///
+    /// A scan takes milliseconds and cannot be interrupted part-way, so this always runs to completion
+    /// and returns a report, even if the calling task is cancelled meanwhile.
     ///
     /// - Parameter checks: Run only these check families instead of the configured ones.
     public func evaluate(checks: Set<SecurityCheck>? = nil) async -> SecurityReport {
@@ -85,8 +94,7 @@ public final class SecurityEngine: @unchecked Sendable {
     ) {
         let snapshot = configuration
         queue.async { [self] in
-            let report = performScan(configuration: snapshot, checks: checks)
-            completion(report)
+            completion(performScan(configuration: snapshot, checks: checks))
         }
     }
 
@@ -118,11 +126,43 @@ public final class SecurityEngine: @unchecked Sendable {
         }
     }
 
-    /// Every report this engine produces, from ``evaluate(checks:)`` and ``monitor(interval:checks:)``.
+    // MARK: - Observation
+
+    /// Every report this engine produces, from ``evaluate(checks:)``, ``evaluate(checks:completion:)``
+    /// and ``monitor(interval:checks:)``, in the order they finish.
     ///
-    /// Values are delivered on a background queue; use `receive(on:)` before updating UI.
-    public var reports: AnyPublisher<SecurityReport, Never> {
-        reportSubject.eraseToAnyPublisher()
+    /// Delivery starts when iteration starts, so reports from before the first `for await` are not
+    /// replayed. A slow consumer keeps the newest few reports and drops the rest.
+    ///
+    /// ```swift
+    /// for await report in SecurityEngine.shared.reports where report.isCompromised { … }
+    /// ```
+    public var reports: Reports {
+        Reports(engine: self)
+    }
+
+    /// The reports an engine produces, as an asynchronous sequence. Obtain one from ``SecurityEngine/reports``.
+    public struct Reports: AsyncSequence, Sendable {
+        public typealias Element = SecurityReport
+
+        fileprivate let engine: SecurityEngine
+
+        public func makeAsyncIterator() -> Iterator {
+            Iterator(stream: engine.makeReportStream().makeAsyncIterator())
+        }
+
+        public struct Iterator: AsyncIteratorProtocol {
+            fileprivate var stream: AsyncStream<SecurityReport>.Iterator
+
+            public mutating func next() async -> SecurityReport? {
+                await stream.next()
+            }
+        }
+    }
+
+    /// How many ``reports`` iterations are currently receiving.
+    @_spi(Testing) public var reportSubscriberCount: Int {
+        state.withLock { $0.subscribers.count }
     }
 
     // MARK: - Raw signals
@@ -140,7 +180,7 @@ public final class SecurityEngine: @unchecked Sendable {
     }
 
     /// The SHA-256 of a loaded library's `__TEXT,__text` section: the value for
-    /// ``SecurityConfiguration/expectedImageTextDigests``. Print it from a TestFlight build.
+    /// ``SecurityConfiguration/Integrity/expectedImageTextDigests``. Print it from a TestFlight build.
     ///
     /// - Parameter name: The library's trailing path components, for example `"Auth.framework/Auth"`.
     /// - Returns: Lowercase hex, or `nil` when no such library is loaded or its code cannot be read.
@@ -172,7 +212,20 @@ public final class SecurityEngine: @unchecked Sendable {
     private func performScan(configuration: SecurityConfiguration, checks: Set<SecurityCheck>?) -> SecurityReport {
         let options = configuration.makeScanOptions(checksOverride: checks)
         let report = SecurityReport(ISCSecurityScanner(options: options).scan())
-        reportSubject.send(report)
+        for subscriber in state.withLock({ Array($0.subscribers.values) }) {
+            subscriber.yield(report)
+        }
         return report
+    }
+
+    /// A stream that receives every report from now until it is dropped or its consumer is cancelled.
+    private func makeReportStream() -> AsyncStream<SecurityReport> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
+            let id = UUID()
+            state.withLock { $0.subscribers[id] = continuation }
+            continuation.onTermination = { [weak self] _ in
+                self?.state.withLock { _ = $0.subscribers.removeValue(forKey: id) }
+            }
+        }
     }
 }

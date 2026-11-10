@@ -21,18 +21,18 @@ extension SecurityConfiguration {
         options.includesBuiltInIndicators = includesBuiltInIndicators
         options.scansUnsupportedEnvironments = scansUnsupportedEnvironments
 
-        options.additionalSuspiciousPaths = additionalSuspiciousPaths
-        options.performsSandboxWriteProbe = performsSandboxWriteProbe
-        options.performsForkProbe = performsForkProbe
-        options.additionalSuspiciousClasses = additionalSuspiciousClasses
-        options.probesRemoteShellPorts = probesRemoteShellPorts
+        options.additionalSuspiciousPaths = jailbreak.additionalSuspiciousPaths
+        options.performsSandboxWriteProbe = jailbreak.performsSandboxWriteProbe
+        options.performsForkProbe = jailbreak.performsForkProbe
+        options.additionalSuspiciousClasses = jailbreak.additionalSuspiciousClasses
+        options.probesRemoteShellPorts = jailbreak.probesRemoteShellPorts
 
-        options.additionalSuspiciousLibraries = additionalSuspiciousLibraries
-        options.allowedImagePathPrefixes = allowedImagePathPrefixes
-        options.reportsUnknownLibraries = reportsUnknownLibraries
-        options.allowedBundleLibraries = allowedBundleLibraries
-        options.probesInstrumentationPorts = probesInstrumentationPorts
-        options.protectedMethods = protectedMethods.map { method in
+        options.additionalSuspiciousLibraries = hooking.additionalSuspiciousLibraries
+        options.allowedImagePathPrefixes = hooking.allowedImagePathPrefixes
+        options.reportsUnknownLibraries = hooking.reportsUnknownLibraries
+        options.allowedBundleLibraries = hooking.allowedBundleLibraries
+        options.probesInstrumentationPorts = hooking.probesInstrumentationPorts
+        options.protectedMethods = hooking.protectedMethods.map { method in
             ISCProtectedMethod(
                 targetClassName: method.className,
                 selectorName: method.selector,
@@ -41,11 +41,11 @@ extension SecurityConfiguration {
             )
         }
 
-        options.expectedBundleIdentifier = expectedBundleIdentifier
-        options.expectedTeamIdentifier = expectedTeamIdentifier
-        options.expectedTextSegmentDigests = expectedTextSegmentDigests.sorted()
-        options.expectedImageTextDigests = expectedImageTextDigests.mapValues { $0.sorted() }
-        options.expectedDistribution = expectedDistribution.objcValue
+        options.expectedBundleIdentifier = integrity.expectedBundleIdentifier
+        options.expectedTeamIdentifier = integrity.expectedTeamIdentifier
+        options.expectedTextSegmentDigests = integrity.expectedTextSegmentDigests.sorted()
+        options.expectedImageTextDigests = integrity.expectedImageTextDigests.mapValues { $0.sorted() }
+        options.expectedDistribution = integrity.expectedDistribution.objcValue
         return options
     }
 }
