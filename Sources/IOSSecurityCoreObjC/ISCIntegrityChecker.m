@@ -7,6 +7,7 @@
 //
 
 #import "ISCIntegrityChecker.h"
+#import "ISCDEREntitlements.h"
 #import "ISCDetector.h"
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
@@ -20,11 +21,13 @@
 
 // MARK: - Constants
 
-/// Code-signature container magic numbers and the slot that holds XML entitlements. These are fixed by
-/// the on-disk format (they are big-endian on disk).
+/// Code-signature container magic numbers and the slots that hold entitlements, XML (the historical
+/// form) and DER (required since iOS 15). These are fixed by the on-disk format (big-endian on disk).
 static const uint32_t ISCSuperBlobMagic = 0xfade0cc0;
 static const uint32_t ISCEntitlementsBlobMagic = 0xfade7171;
 static const uint32_t ISCEntitlementsSlot = 5;
+static const uint32_t ISCDEREntitlementsBlobMagic = 0xfade7172;
+static const uint32_t ISCDEREntitlementsSlot = 7;
 
 /// Sanity limits: real signatures are kilobytes. Anything bigger is corrupt, and a limit keeps a
 /// malformed one from making us copy or parse megabytes.
@@ -318,6 +321,33 @@ static NSString *ISCEmbeddedProvisioningProfilePath(void) {
     return ISCTextDigestOfImage(ISCLocateImageNamed(name));
 }
 
+/// Finds the payload of the blob in `slot`, if that blob carries `magic` and lies inside the SuperBlob
+/// (whose header has already been validated). The payload is at most `ISCMaximumPropertyListSize`.
+static BOOL ISCLocateBlobPayload(const uint8_t *bytes, uint64_t superLength, uint32_t slot, uint32_t magic,
+                                 const uint8_t **outPayload, size_t *outLength) {
+    uint64_t count = ISCReadBigEndian32(bytes + 8);
+    for (uint64_t index = 0; index < count; index++) {
+        const uint8_t *entry = bytes + 12 + index * 8;
+        if (ISCReadBigEndian32(entry) != slot) {
+            continue;
+        }
+        uint64_t offset = ISCReadBigEndian32(entry + 4);
+        if (offset > superLength || superLength - offset < 8) {
+            continue;
+        }
+        const uint8_t *blob = bytes + offset;
+        uint64_t blobLength = ISCReadBigEndian32(blob + 4);
+        if (ISCReadBigEndian32(blob) != magic || blobLength < 8 || blobLength > superLength - offset ||
+            blobLength - 8 > ISCMaximumPropertyListSize) {
+            continue;
+        }
+        *outPayload = blob + 8;
+        *outLength = (size_t)(blobLength - 8);
+        return YES;
+    }
+    return NO;
+}
+
 + (NSDictionary<NSString *, id> *)entitlementsFromCodeSignatureData:(NSData *)data {
     const uint8_t *bytes = data.bytes;
     uint64_t length = data.length;
@@ -333,23 +363,18 @@ static NSString *ISCEmbeddedProvisioningProfilePath(void) {
         return nil;
     }
 
-    for (uint64_t index = 0; index < count; index++) {
-        const uint8_t *entry = bytes + 12 + index * 8;
-        if (ISCReadBigEndian32(entry) != ISCEntitlementsSlot) {
-            continue;
+    // XML first: the slot every signature has carried for years. DER is the fallback, so the day Apple
+    // stops emitting the XML slot nothing changes for callers.
+    const uint8_t *payload = NULL;
+    size_t payloadLength = 0;
+    if (ISCLocateBlobPayload(bytes, superLength, ISCEntitlementsSlot, ISCEntitlementsBlobMagic, &payload, &payloadLength)) {
+        NSDictionary<NSString *, id> *xml = ISCDictionaryFromPropertyListData([NSData dataWithBytes:payload length:payloadLength]);
+        if (xml != nil) {
+            return xml;
         }
-        uint64_t offset = ISCReadBigEndian32(entry + 4);
-        if (offset > superLength || superLength - offset < 8) {
-            continue;
-        }
-        const uint8_t *blob = bytes + offset;
-        uint64_t blobLength = ISCReadBigEndian32(blob + 4);
-        if (ISCReadBigEndian32(blob) != ISCEntitlementsBlobMagic ||
-            blobLength < 8 || blobLength > superLength - offset) {
-            continue;
-        }
-        return ISCDictionaryFromPropertyListData([NSData dataWithBytes:blob + 8
-                                                                length:(NSUInteger)(blobLength - 8)]);
+    }
+    if (ISCLocateBlobPayload(bytes, superLength, ISCDEREntitlementsSlot, ISCDEREntitlementsBlobMagic, &payload, &payloadLength)) {
+        return ISCDictionaryFromDEREntitlements(payload, payloadLength);
     }
     return nil;
 }

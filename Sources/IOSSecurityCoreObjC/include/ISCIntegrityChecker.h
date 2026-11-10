@@ -75,8 +75,9 @@ ISC_RN_INTEGRITY_CHECKER
 @property (class, nonatomic, readonly, nullable) NSDictionary<NSString *, id> *embeddedProvisioningProfile;
 
 /// Parses the entitlements out of a raw code-signature blob (the data `LC_CODE_SIGNATURE` points to).
-/// Returns `nil` for anything that is not a well-formed signature carrying XML entitlements. Never
-/// reads out of bounds, whatever the input.
+/// Reads the XML entitlements slot, and falls back to the DER slot Apple has required since iOS 15, so
+/// the result survives the XML slot being dropped. Returns `nil` for anything that is not a well-formed
+/// signature carrying entitlements in either form. Never reads out of bounds, whatever the input.
 + (nullable NSDictionary<NSString *, id> *)entitlementsFromCodeSignatureData:(NSData *)data;
 
 /// The Team ID named by an entitlements dictionary: `com.apple.developer.team-identifier` if present,

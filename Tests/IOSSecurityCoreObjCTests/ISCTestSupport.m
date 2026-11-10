@@ -64,12 +64,87 @@ static void ISCAppendBigEndian32(NSMutableData *data, uint32_t value) {
     [data appendBytes:&big length:sizeof(big)];
 }
 
-NSData *ISCMakeSignatureBlob(NSDictionary<NSString *, id> *entitlements) {
-    NSData *plist = [NSPropertyListSerialization dataWithPropertyList:entitlements
-                                                               format:NSPropertyListXMLFormat_v1_0
-                                                              options:0
-                                                                error:NULL];
+// MARK: - DER encoding (CoreFoundation's property-list mapping)
 
+static void ISCDERAppendLength(NSMutableData *data, NSUInteger length) {
+    if (length < 0x80) {
+        uint8_t byte = (uint8_t)length;
+        [data appendBytes:&byte length:1];
+        return;
+    }
+    int octets = 0;
+    for (NSUInteger value = length; value > 0; value >>= 8) {
+        octets++;
+    }
+    uint8_t header = (uint8_t)(0x80 | octets);
+    [data appendBytes:&header length:1];
+    for (int index = octets - 1; index >= 0; index--) {
+        uint8_t byte = (uint8_t)(length >> (8 * index));
+        [data appendBytes:&byte length:1];
+    }
+}
+
+static void ISCDERAppendElement(NSMutableData *data, uint8_t tag, NSData *content) {
+    [data appendBytes:&tag length:1];
+    ISCDERAppendLength(data, content.length);
+    [data appendData:content];
+}
+
+static NSData *ISCDEREncode(id object) {
+    NSMutableData *out = [NSMutableData data];
+    if ([object isKindOfClass:NSString.class]) {
+        ISCDERAppendElement(out, 0x0C, [object dataUsingEncoding:NSUTF8StringEncoding]);
+    } else if ([object isKindOfClass:NSNumber.class]) {
+        if (CFGetTypeID((__bridge CFTypeRef)object) == CFBooleanGetTypeID()) {
+            uint8_t value = [object boolValue] ? 0xFF : 0x00;
+            ISCDERAppendElement(out, 0x01, [NSData dataWithBytes:&value length:1]);
+        } else {
+            // Minimal two's-complement big-endian encoding.
+            int64_t value = [object longLongValue];
+            uint8_t bytes[8];
+            for (int index = 0; index < 8; index++) {
+                bytes[index] = (uint8_t)((uint64_t)value >> (8 * (7 - index)));
+            }
+            int start = 0;
+            while (start < 7 && ((bytes[start] == 0x00 && (bytes[start + 1] & 0x80) == 0) ||
+                                 (bytes[start] == 0xFF && (bytes[start + 1] & 0x80) != 0))) {
+                start++;
+            }
+            ISCDERAppendElement(out, 0x02, [NSData dataWithBytes:bytes + start length:(NSUInteger)(8 - start)]);
+        }
+    } else if ([object isKindOfClass:NSData.class]) {
+        ISCDERAppendElement(out, 0x04, object);
+    } else if ([object isKindOfClass:NSArray.class]) {
+        NSMutableData *content = [NSMutableData data];
+        for (id item in object) {
+            [content appendData:ISCDEREncode(item)];
+        }
+        ISCDERAppendElement(out, 0x30, content);
+    } else if ([object isKindOfClass:NSDictionary.class]) {
+        NSMutableData *content = [NSMutableData data];
+        for (NSString *key in [[object allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+            NSMutableData *entry = [NSMutableData data];
+            [entry appendData:ISCDEREncode(key)];
+            [entry appendData:ISCDEREncode(object[key])];
+            ISCDERAppendElement(content, 0x30, entry);
+        }
+        ISCDERAppendElement(out, 0x31, content);
+    }
+    return out;
+}
+
+NSData *ISCMakeDEREntitlementsPayload(NSDictionary<NSString *, id> *entitlements) {
+    NSMutableData *content = [NSMutableData data];
+    [content appendData:ISCDEREncode(@1)]; // format version
+    [content appendData:ISCDEREncode(entitlements)];
+    NSMutableData *payload = [NSMutableData data];
+    ISCDERAppendElement(payload, 0x70, content); // [APPLICATION 16], constructed
+    return payload;
+}
+
+// MARK: - Signature SuperBlobs
+
+NSData *ISCMakeSignatureBlobWithPayloads(NSData *xmlPayload, NSData *derPayload) {
     // Slot 0 stands in for the code directory; the parser must skip it.
     NSMutableData *codeDirectory = [NSMutableData data];
     ISCAppendBigEndian32(codeDirectory, 0xfade0c02);
@@ -77,25 +152,58 @@ NSData *ISCMakeSignatureBlob(NSDictionary<NSString *, id> *entitlements) {
     ISCAppendBigEndian32(codeDirectory, 0);
     ISCAppendBigEndian32(codeDirectory, 0);
 
-    NSMutableData *entitlementsBlob = [NSMutableData data];
-    ISCAppendBigEndian32(entitlementsBlob, 0xfade7171);
-    ISCAppendBigEndian32(entitlementsBlob, (uint32_t)(8 + plist.length));
-    [entitlementsBlob appendData:plist];
+    NSMutableArray<NSNumber *> *slots = [NSMutableArray arrayWithObject:@0]; // CSSLOT_CODEDIRECTORY
+    NSMutableArray<NSData *> *blobs = [NSMutableArray arrayWithObject:codeDirectory];
+    if (xmlPayload != nil) {
+        NSMutableData *blob = [NSMutableData data];
+        ISCAppendBigEndian32(blob, 0xfade7171);
+        ISCAppendBigEndian32(blob, (uint32_t)(8 + xmlPayload.length));
+        [blob appendData:xmlPayload];
+        [slots addObject:@5]; // CSSLOT_ENTITLEMENTS
+        [blobs addObject:blob];
+    }
+    if (derPayload != nil) {
+        NSMutableData *blob = [NSMutableData data];
+        ISCAppendBigEndian32(blob, 0xfade7172);
+        ISCAppendBigEndian32(blob, (uint32_t)(8 + derPayload.length));
+        [blob appendData:derPayload];
+        [slots addObject:@7]; // CSSLOT_DER_ENTITLEMENTS
+        [blobs addObject:blob];
+    }
 
-    uint32_t indexSize = 12 + 2 * 8;
-    uint32_t codeDirectoryOffset = indexSize;
-    uint32_t entitlementsOffset = codeDirectoryOffset + (uint32_t)codeDirectory.length;
-    uint32_t totalLength = entitlementsOffset + (uint32_t)entitlementsBlob.length;
+    uint32_t offset = (uint32_t)(12 + slots.count * 8);
+    NSMutableArray<NSNumber *> *offsets = [NSMutableArray array];
+    for (NSData *blob in blobs) {
+        [offsets addObject:@(offset)];
+        offset += (uint32_t)blob.length;
+    }
 
-    NSMutableData *blob = [NSMutableData data];
-    ISCAppendBigEndian32(blob, 0xfade0cc0);
-    ISCAppendBigEndian32(blob, totalLength);
-    ISCAppendBigEndian32(blob, 2);
-    ISCAppendBigEndian32(blob, 0); // CSSLOT_CODEDIRECTORY
-    ISCAppendBigEndian32(blob, codeDirectoryOffset);
-    ISCAppendBigEndian32(blob, 5); // CSSLOT_ENTITLEMENTS
-    ISCAppendBigEndian32(blob, entitlementsOffset);
-    [blob appendData:codeDirectory];
-    [blob appendData:entitlementsBlob];
-    return blob;
+    NSMutableData *superBlob = [NSMutableData data];
+    ISCAppendBigEndian32(superBlob, 0xfade0cc0);
+    ISCAppendBigEndian32(superBlob, offset);
+    ISCAppendBigEndian32(superBlob, (uint32_t)slots.count);
+    for (NSUInteger index = 0; index < slots.count; index++) {
+        ISCAppendBigEndian32(superBlob, slots[index].unsignedIntValue);
+        ISCAppendBigEndian32(superBlob, offsets[index].unsignedIntValue);
+    }
+    for (NSData *blob in blobs) {
+        [superBlob appendData:blob];
+    }
+    return superBlob;
+}
+
+NSData *ISCMakeSignatureBlobWithSlots(NSDictionary<NSString *, id> *xmlEntitlements,
+                                      NSDictionary<NSString *, id> *derEntitlements) {
+    NSData *xmlPayload = xmlEntitlements != nil
+        ? [NSPropertyListSerialization dataWithPropertyList:xmlEntitlements
+                                                     format:NSPropertyListXMLFormat_v1_0
+                                                    options:0
+                                                      error:NULL]
+        : nil;
+    NSData *derPayload = derEntitlements != nil ? ISCMakeDEREntitlementsPayload(derEntitlements) : nil;
+    return ISCMakeSignatureBlobWithPayloads(xmlPayload, derPayload);
+}
+
+NSData *ISCMakeSignatureBlob(NSDictionary<NSString *, id> *entitlements) {
+    return ISCMakeSignatureBlobWithSlots(entitlements, nil);
 }

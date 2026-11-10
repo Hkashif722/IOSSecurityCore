@@ -37,6 +37,102 @@ static NSString *ISCTestImageName(void) {
     XCTAssertEqualObjects(parsed, entitlements);
 }
 
+// MARK: DER entitlements
+
+- (void)testParsesDEREntitlementsWhenTheXMLSlotIsAbsent {
+    NSDictionary *entitlements = @{
+        @"application-identifier": @"ABCDE12345.com.example.app",
+        @"com.apple.developer.team-identifier": @"ABCDE12345",
+        @"get-task-allow": @NO,
+        @"keychain-access-groups": @[@"ABCDE12345.com.example.app"],
+        @"com.example.limits": @{@"enabled": @YES, @"retries": @(-300), @"budget": @(1 << 20)},
+        @"com.example.blob": [@"bytes" dataUsingEncoding:NSUTF8StringEncoding],
+    };
+    NSDictionary *parsed = [ISCIntegrityChecker entitlementsFromCodeSignatureData:ISCMakeSignatureBlobWithSlots(nil, entitlements)];
+    XCTAssertEqualObjects(parsed, entitlements);
+    XCTAssertEqualObjects([ISCIntegrityChecker teamIdentifierFromEntitlements:parsed], @"ABCDE12345");
+}
+
+- (void)testXMLEntitlementsTakePrecedenceWhenBothSlotsAreReadable {
+    NSData *blob = ISCMakeSignatureBlobWithSlots(@{@"source": @"xml"}, @{@"source": @"der"});
+    XCTAssertEqualObjects([ISCIntegrityChecker entitlementsFromCodeSignatureData:blob][@"source"], @"xml");
+}
+
+- (void)testDERIsUsedWhenTheXMLSlotIsUnreadable {
+    NSData *xmlPayload = [NSData dataWithBytes:"not a property list" length:19];
+    NSData *blob = ISCMakeSignatureBlobWithPayloads(xmlPayload, ISCMakeDEREntitlementsPayload(@{@"source": @"der"}));
+    XCTAssertEqualObjects([ISCIntegrityChecker entitlementsFromCodeSignatureData:blob][@"source"], @"der");
+}
+
+- (void)testABareDERSetWithoutTheWrapperIsAccepted {
+    // The wrapper is Apple's convention; the dictionary alone is still a valid encoding.
+    uint8_t set[] = {0x31, 0x08, 0x30, 0x06, 0x0C, 0x01, 'k', 0x0C, 0x01, 'v'};
+    NSData *blob = ISCMakeSignatureBlobWithPayloads(nil, [NSData dataWithBytes:set length:sizeof(set)]);
+    XCTAssertEqualObjects([ISCIntegrityChecker entitlementsFromCodeSignatureData:blob], @{@"k": @"v"});
+}
+
+- (void)testAnUnknownDERValueTypeBecomesNullInsteadOfFailingTheDictionary {
+    // 0x13 is PrintableString, which the property-list mapping never emits.
+    uint8_t set[] = {0x31, 0x08, 0x30, 0x06, 0x0C, 0x01, 'k', 0x13, 0x01, 'v'};
+    NSData *blob = ISCMakeSignatureBlobWithPayloads(nil, [NSData dataWithBytes:set length:sizeof(set)]);
+    XCTAssertEqualObjects([ISCIntegrityChecker entitlementsFromCodeSignatureData:blob], @{@"k": NSNull.null});
+}
+
+- (void)testStructurallyBrokenDERIsRejected {
+    uint8_t notASequenceEntry[] = {0x31, 0x03, 0x0C, 0x01, 'k'};
+    uint8_t keyIsNotAString[] = {0x31, 0x08, 0x30, 0x06, 0x02, 0x01, 0x01, 0x0C, 0x01, 'v'};
+    uint8_t indefiniteLength[] = {0x31, 0x80, 0x00, 0x00};
+    uint8_t topLevelIsAnArray[] = {0x30, 0x03, 0x0C, 0x01, 'k'};
+    NSArray<NSData *> *payloads = @[
+        [NSData dataWithBytes:notASequenceEntry length:sizeof(notASequenceEntry)],
+        [NSData dataWithBytes:keyIsNotAString length:sizeof(keyIsNotAString)],
+        [NSData dataWithBytes:indefiniteLength length:sizeof(indefiniteLength)],
+        [NSData dataWithBytes:topLevelIsAnArray length:sizeof(topLevelIsAnArray)],
+    ];
+    for (NSData *payload in payloads) {
+        XCTAssertNil([ISCIntegrityChecker entitlementsFromCodeSignatureData:ISCMakeSignatureBlobWithPayloads(nil, payload)],
+                     @"%@", payload);
+    }
+}
+
+- (void)testEveryTruncationOfADERPayloadIsRejectedWithoutReadingOutOfBounds {
+    NSData *payload = ISCMakeDEREntitlementsPayload(@{@"application-identifier": @"ABCDE12345.com.example.app",
+                                                      @"get-task-allow": @YES,
+                                                      @"groups": @[@"a", @"b"]});
+    for (NSUInteger length = 0; length < payload.length; length++) {
+        // The SuperBlob around it is valid, so the parser reaches the DER with exactly `length` bytes.
+        NSData *truncated = [NSData dataWithBytes:payload.bytes length:length];
+        XCTAssertNil([ISCIntegrityChecker entitlementsFromCodeSignatureData:ISCMakeSignatureBlobWithPayloads(nil, truncated)],
+                     @"length %lu", (unsigned long)length);
+    }
+}
+
+- (void)testRandomlyMutatedDERSignaturesNeverCrash {
+    NSData *valid = ISCMakeSignatureBlobWithSlots(nil, @{@"application-identifier": @"ABCDE12345.com.example.app",
+                                                         @"get-task-allow": @YES,
+                                                         @"nested": @{@"list": @[@1, @2, @"three"]}});
+    __block uint64_t state = 0x2545F4914F6CDD1Dull;
+    uint64_t (^next)(void) = ^uint64_t {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    };
+
+    for (int round = 0; round < 3000; round++) {
+        NSMutableData *mutated = [valid mutableCopy];
+        int flips = 1 + (int)(next() % 6);
+        for (int flip = 0; flip < flips; flip++) {
+            ((uint8_t *)mutated.mutableBytes)[next() % mutated.length] = (uint8_t)next();
+        }
+        NSData *input = [NSData dataWithBytes:mutated.bytes length:mutated.length];
+        id result = [ISCIntegrityChecker entitlementsFromCodeSignatureData:input];
+        XCTAssertTrue(result == nil || [result isKindOfClass:NSDictionary.class]);
+    }
+}
+
+// MARK: Container
+
 - (void)testSignatureWithoutAnEntitlementsSlotYieldsNil {
     // A SuperBlob with one slot that is not the entitlements slot.
     uint32_t words[] = {CFSwapInt32HostToBig(0xfade0cc0), CFSwapInt32HostToBig(20),

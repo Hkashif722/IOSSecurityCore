@@ -32,4 +32,16 @@ ISCFinding *_Nullable ISCFindingWithCode(NSArray<ISCFinding *> *findings, ISCFin
 /// unrelated slot before it, as real signatures have).
 NSData *ISCMakeSignatureBlob(NSDictionary<NSString *, id> *entitlements);
 
+/// A SuperBlob with an XML entitlements slot (5) for `xmlEntitlements` and a DER slot (7) for
+/// `derEntitlements`. Pass nil to leave either slot out. Slot order: code directory, XML, DER.
+NSData *ISCMakeSignatureBlobWithSlots(NSDictionary<NSString *, id> *_Nullable xmlEntitlements,
+                                      NSDictionary<NSString *, id> *_Nullable derEntitlements);
+
+/// The same, from raw payloads, for feeding the parser deliberately damaged bytes.
+NSData *ISCMakeSignatureBlobWithPayloads(NSData *_Nullable xmlPayload, NSData *_Nullable derPayload);
+
+/// `entitlements` in Apple's DER form: `[APPLICATION 16] { INTEGER 1, SET { SEQUENCE { key, value } } }`.
+/// Supports strings, booleans, integers, data, arrays and dictionaries.
+NSData *ISCMakeDEREntitlementsPayload(NSDictionary<NSString *, id> *entitlements);
+
 NS_ASSUME_NONNULL_END

@@ -7,27 +7,10 @@
 //
 
 #import "ISCSecurityScanner.h"
-#import "ISCDebuggerDetector.h"
 #import "ISCDetector.h"
 #import "ISCEnvironment.h"
-#import "ISCHookDetector.h"
-#import "ISCIntegrityChecker.h"
-#import "ISCJailbreakDetector.h"
-#import "ISCNetworkDetector.h"
 
 #include <CoreFoundation/CoreFoundation.h>
-
-NSArray<Class<ISCDetector>> *ISCDetectorClasses(void) {
-    // Scan order. Jailbreak first because its findings give the later ones context; network last because
-    // it is the weakest signal.
-    return @[
-        ISCJailbreakDetector.class,
-        ISCDebuggerDetector.class,
-        ISCHookDetector.class,
-        ISCIntegrityChecker.class,
-        ISCNetworkDetector.class,
-    ];
-}
 
 /// Why a scan was skipped, as the single informational finding the result carries.
 static ISCFindingCode ISCSkipReason(void) {
