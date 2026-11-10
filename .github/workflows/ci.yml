@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS host tests + symbol audit
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: swift test
+        run: swift test
+
+      # Release build for generic iOS; fails on required-reason APIs or plain-text indicators.
+      - name: Privacy / plain-text audit
+        run: Scripts/audit-symbols.sh
+
+  ios-simulator:
+    name: iOS Simulator tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runner images change simulator names, so take the first available iPhone instead of hardcoding one.
+      - name: Pick simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(d["udid"] for runtime, ds in devices.items() if ".iOS-" in runtime
+                     for d in ds if d["name"].startswith("iPhone")))')
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "$udid"
+
+      - name: xcodebuild test
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme IOSSecurityCore-Package \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath TestResults.xcresult \
+            | tee xcodebuild.log | grep -E "Test Suite|Executed|error:|failed|\*\* TEST"
+
+      - name: Upload results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-results
+          path: |
+            TestResults.xcresult
+            xcodebuild.log

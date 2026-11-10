@@ -16,3 +16,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compile-time string obfuscation macros (`ISC_OBF_*`) and `StringObfuscator`.
 - Empty privacy manifest; `Scripts/audit-symbols.sh` keeps it honest.
 - `Scripts/text-digest.swift` to compute the expected `__TEXT,__text` digest of a release binary.
+- Jailbreak indicators `/bin/sh`, `/usr/lib/libjailbreak.dylib`, `libsandy` and the Shadow bypass tweak.

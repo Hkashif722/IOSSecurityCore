@@ -18,6 +18,9 @@ NS_ASSUME_NONNULL_BEGIN
 #define ISC_STRIP_CODE_POINTER(pointer) (pointer)
 #endif
 
+/// How many matches a finding's `detail` spells out before `ISCSummarizeValues` cuts it short.
+static const NSUInteger ISCDetailLimit = 5;
+
 // MARK: - File system
 
 /// A C string for `path` that is safe to pass to system calls, or `NULL` when there is none.
@@ -45,10 +48,8 @@ NSArray<NSString *> *ISCCopyLoadedImagePaths(void);
 /// Drops a leading `/private`, so `/private/var/x` and `/var/x` compare equal.
 NSString *ISCCanonicalizePath(NSString *path);
 
-/// Prefix test that treats `/private/var/...` and `/var/...` as the same location.
-BOOL ISCPathHasPrefix(NSString *path, NSString *prefix);
-
-/// `YES` if `path` has any of `prefixes` as a prefix (see `ISCPathHasPrefix`).
+/// `YES` if `path` has any of `prefixes` as a prefix. `/private/var/...` and `/var/...` count as the same
+/// location.
 BOOL ISCPathMatchesAnyPrefix(NSString *path, NSArray<NSString *> *prefixes);
 
 /// The app bundle directory (with trailing slash) and, inside an app extension, the containing `.app`.
@@ -60,11 +61,6 @@ BOOL ISCImageForAddress(const void *address,
                         const void *_Nullable *_Nullable outBase);
 
 // MARK: - Strings
-
-/// `YES` when `haystack` contains any of `needles`, ignoring case. `matched` receives the first hit.
-BOOL ISCStringContainsAny(NSString *haystack,
-                          NSArray<NSString *> *needles,
-                          NSString *_Nullable *_Nullable matched);
 
 /// The members of `strings` that contain any of `needles`, ignoring case.
 NSArray<NSString *> *ISCStringsContainingAny(NSArray<NSString *> *strings, NSArray<NSString *> *needles);

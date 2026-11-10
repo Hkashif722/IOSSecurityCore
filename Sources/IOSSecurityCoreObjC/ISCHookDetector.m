@@ -23,9 +23,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-/// How many matches a finding's `detail` spells out before summarizing.
-static const NSUInteger ISCDetailLimit = 5;
-
 /// Frida's default listening port.
 static const uint16_t ISCInstrumentationPort = 27042;
 

@@ -16,7 +16,7 @@ public struct SecurityThreat: Hashable, Sendable, Codable, CustomStringConvertib
             self.rawValue = rawValue
         }
 
-        fileprivate init(_ code: ISCFindingCode) {
+        init(_ code: ISCFindingCode) {
             self.init(rawValue: code.rawValue)
         }
 

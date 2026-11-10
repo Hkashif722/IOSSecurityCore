@@ -75,7 +75,8 @@ NSString *ISCCanonicalizePath(NSString *path) {
     return path;
 }
 
-BOOL ISCPathHasPrefix(NSString *path, NSString *prefix) {
+/// Prefix test that treats `/private/var/...` and `/var/...` as the same location.
+static BOOL ISCPathHasPrefix(NSString *path, NSString *prefix) {
     if (prefix.length == 0) {
         return NO;
     }
@@ -146,15 +147,11 @@ BOOL ISCImageForAddress(const void *address, NSString **outPath, const void **ou
 
 // MARK: - Strings
 
-BOOL ISCStringContainsAny(NSString *haystack, NSArray<NSString *> *needles, NSString **matched) {
+/// `YES` when `haystack` contains any of `needles`, ignoring case. Empty needles never match.
+static BOOL ISCStringContainsAny(NSString *haystack, NSArray<NSString *> *needles) {
     for (NSString *needle in needles) {
-        if (needle.length == 0) {
-            continue;
-        }
-        if ([haystack rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            if (matched != NULL) {
-                *matched = needle;
-            }
+        if (needle.length > 0 &&
+            [haystack rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound) {
             return YES;
         }
     }
@@ -164,7 +161,7 @@ BOOL ISCStringContainsAny(NSString *haystack, NSArray<NSString *> *needles, NSSt
 NSArray<NSString *> *ISCStringsContainingAny(NSArray<NSString *> *strings, NSArray<NSString *> *needles) {
     NSMutableArray<NSString *> *matches = [NSMutableArray array];
     for (NSString *string in strings) {
-        if (ISCStringContainsAny(string, needles, NULL)) {
+        if (ISCStringContainsAny(string, needles)) {
             [matches addObject:string];
         }
     }

@@ -15,9 +15,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-/// How many matches a finding's `detail` spells out before summarizing.
-static const NSUInteger ISCDetailLimit = 5;
-
 // MARK: - Built-in indicators
 //
 // Every literal goes through ISC_OBF_NSSTRING, so none of them exists in plain text in the binary.
@@ -70,9 +67,11 @@ static NSArray<NSString *> *ISCBuiltInArtifactPaths(void) {
             ISC_OBF_NSSTRING("/usr/lib/TweakInject"),
             ISC_OBF_NSSTRING("/usr/lib/TweakInject.dylib"),
             ISC_OBF_NSSTRING("/usr/lib/libcycript.dylib"),
+            ISC_OBF_NSSTRING("/usr/lib/libjailbreak.dylib"),
 
             // Remote shells and package tooling
             ISC_OBF_NSSTRING("/bin/bash"),
+            ISC_OBF_NSSTRING("/bin/sh"),
             ISC_OBF_NSSTRING("/usr/sbin/sshd"),
             ISC_OBF_NSSTRING("/usr/bin/sshd"),
             ISC_OBF_NSSTRING("/usr/bin/ssh"),
@@ -137,10 +136,13 @@ static NSArray<NSString *> *ISCBuiltInInjectionLibraries(void) {
             ISC_OBF_NSSTRING("TweakInject"),
             ISC_OBF_NSSTRING("ellekit"),
             ISC_OBF_NSSTRING("libjailbreak"),
+            ISC_OBF_NSSTRING("libsandy"),
             ISC_OBF_NSSTRING("rocketbootstrap"),
             ISC_OBF_NSSTRING("pspawn_payload"),
+            // Jailbreak-detection bypass tweaks
             ISC_OBF_NSSTRING("ABypass"),
             ISC_OBF_NSSTRING("FlyJB"),
+            ISC_OBF_NSSTRING("/Shadow.dylib"),
         ];
     });
     return names;

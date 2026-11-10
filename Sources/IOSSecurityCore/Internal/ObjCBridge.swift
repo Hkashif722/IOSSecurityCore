@@ -51,7 +51,7 @@ extension SecurityConfiguration.Distribution {
 extension SecurityThreat {
     init(_ finding: ISCFinding) {
         self.init(
-            kind: Kind(rawValue: finding.code.rawValue),
+            kind: Kind(finding.code),
             category: Category(finding.category),
             severity: Severity(finding.severity),
             identifier: finding.identifier,

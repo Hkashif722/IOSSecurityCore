@@ -1,0 +1,24 @@
+# security-audit.denylist — names that must not be visible in the shipping binary.
+#
+# Copy this to  security-audit.denylist  (next to your .xcodeproj, i.e. $SRCROOT) or point
+# $SECURITY_AUDIT_DENYLIST at it. One extended-regex (ERE) per line. '#' starts a comment.
+# Matching is against every string in the binary, so anchor loosely and keep entries specific.
+#
+# Remember what a build-phase gate can and cannot do:
+#   • It CATCHES a name that reached the binary. It does not rename anything.
+#   • Only list names that are NOT resolved by string at runtime. If a class is loaded via a
+#     storyboard/XIB, Codable, KVC, Core Data, NSClassFromString or #selector, renaming it at the
+#     source to satisfy this gate will break the app. Audit those names out some other way.
+
+# ── Your sensitive class names (the class-dump finding) ───────────────────────────────────
+# LicenseValidator
+# JailbreakDetector
+# RootBeerish
+# AntiTamper(ing)?Manager
+
+# ── Internal hosts / endpoints that should never be literals in a binary ──────────────────
+# internal\.example\.com
+# staging-api\.
+
+# ── Framework/SDK tells you would rather not advertise ────────────────────────────────────
+# YourSecretSDK
