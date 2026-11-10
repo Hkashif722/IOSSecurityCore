@@ -2,9 +2,13 @@
 //  ISCSecurityScanner.m
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import "ISCSecurityScanner.h"
 #import "ISCDebuggerDetector.h"
+#import "ISCDetector.h"
 #import "ISCEnvironment.h"
 #import "ISCHookDetector.h"
 #import "ISCIntegrityChecker.h"
@@ -12,6 +16,18 @@
 #import "ISCNetworkDetector.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+
+NSArray<Class<ISCDetector>> *ISCDetectorClasses(void) {
+    // Scan order. Jailbreak first because its findings give the later ones context; network last because
+    // it is the weakest signal.
+    return @[
+        ISCJailbreakDetector.class,
+        ISCDebuggerDetector.class,
+        ISCHookDetector.class,
+        ISCIntegrityChecker.class,
+        ISCNetworkDetector.class,
+    ];
+}
 
 /// Why a scan was skipped, as the single informational finding the result carries.
 static ISCFindingCode ISCSkipReason(void) {
@@ -51,25 +67,12 @@ static ISCFindingCode ISCSkipReason(void) {
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
     ISCChecks performed = 0;
 
-    if (options.checks & ISCChecksJailbreak) {
-        [findings addObjectsFromArray:[ISCJailbreakDetector scanWithOptions:options]];
-        performed |= ISCChecksJailbreak;
-    }
-    if (options.checks & ISCChecksDebugger) {
-        [findings addObjectsFromArray:[ISCDebuggerDetector scanWithOptions:options]];
-        performed |= ISCChecksDebugger;
-    }
-    if (options.checks & ISCChecksHooking) {
-        [findings addObjectsFromArray:[ISCHookDetector scanWithOptions:options]];
-        performed |= ISCChecksHooking;
-    }
-    if (options.checks & ISCChecksIntegrity) {
-        [findings addObjectsFromArray:[ISCIntegrityChecker scanWithOptions:options]];
-        performed |= ISCChecksIntegrity;
-    }
-    if (options.checks & ISCChecksNetwork) {
-        [findings addObjectsFromArray:[ISCNetworkDetector scanWithOptions:options]];
-        performed |= ISCChecksNetwork;
+    for (Class<ISCDetector> detector in ISCDetectorClasses()) {
+        if (!ISCDetectorIsEnabled(detector, options)) {
+            continue;
+        }
+        [findings addObjectsFromArray:[detector scanWithOptions:options]];
+        performed |= [detector check];
     }
 
     // Most severe first; equal severities keep a stable order by code.

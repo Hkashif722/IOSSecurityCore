@@ -2,8 +2,12 @@
 //  ISCDebuggerDetector.m
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import "ISCDebuggerDetector.h"
+#import "ISCDetector.h"
 #import "ISCObfuscation.h"
 
 #include <dlfcn.h>
@@ -76,7 +80,14 @@ static void ISCCountArmedDebugRegisters(unsigned *outBreakpointThreads, unsigned
 
 // MARK: - ISCDebuggerDetector
 
+@interface ISCDebuggerDetector () <ISCDetector>
+@end
+
 @implementation ISCDebuggerDetector
+
++ (ISCChecks)check {
+    return ISCChecksDebugger;
+}
 
 + (BOOL)isDebuggerAttached {
     return ISCProcessIsTraced();
@@ -94,7 +105,7 @@ static void ISCCountArmedDebugRegisters(unsigned *outBreakpointThreads, unsigned
 }
 
 + (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
-    if ((options.checks & ISCChecksDebugger) == 0) {
+    if (!ISCDetectorIsEnabled(self, options)) {
         return @[];
     }
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];

@@ -2,6 +2,9 @@
 #
 # audit-symbols.sh
 #
+# Created by Kashif Hussain on 2026-11-10.
+# Copyright © 2026 Kashif Hussain. MIT License.
+#
 # Verifies that the compiled package contains none of Apple's "required reason" APIs (so its privacy
 # manifest can honestly declare nothing) and none of the plain-text indicators the obfuscation macros are
 # meant to hide.

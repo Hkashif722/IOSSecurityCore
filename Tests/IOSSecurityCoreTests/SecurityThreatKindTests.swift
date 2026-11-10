@@ -1,3 +1,11 @@
+//
+//  SecurityThreatKindTests.swift
+//  IOSSecurityCoreTests
+//
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
+
 import IOSSecurityCoreObjC
 import XCTest
 @testable import IOSSecurityCore

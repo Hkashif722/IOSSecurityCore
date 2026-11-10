@@ -2,6 +2,9 @@
 //  ISCSecurityScanner.h
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Runs every enabled detector and aggregates the result.
 //
 

@@ -2,6 +2,9 @@
 //  ISCRuntimeSupport.h
 //  IOSSecurityCoreObjC (private)
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Small helpers shared by the detectors. Not part of the public API.
 //
 

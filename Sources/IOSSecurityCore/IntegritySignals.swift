@@ -1,3 +1,11 @@
+//
+//  IntegritySignals.swift
+//  IOSSecurityCore
+//
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
+
 import Foundation
 import IOSSecurityCoreObjC
 
@@ -42,7 +50,7 @@ public struct IntegritySignals: Hashable, Sendable, Codable {
             bundleIdentifier: Bundle.main.bundleIdentifier,
             teamIdentifier: ISCIntegrityChecker.codeSigningTeamIdentifier,
             isBinaryEncrypted: encryption,
-            hasEmbeddedProvisioningProfile: ISCIntegrityChecker.embeddedProvisioningProfile != nil,
+            hasEmbeddedProvisioningProfile: ISCIntegrityChecker.hasEmbeddedProvisioningProfile,
             isDebuggable: entitlements.map { ($0["get-task-allow"] as? NSNumber)?.boolValue ?? false },
             textSegmentDigest: includingTextDigest ? ISCIntegrityChecker.textSegmentDigest : nil
         )

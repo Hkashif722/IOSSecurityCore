@@ -2,9 +2,13 @@
 //  ISCHookDetector.m
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import "ISCHookDetector.h"
 #import "ISCDebuggerDetector.h"
+#import "ISCDetector.h"
 #import "ISCIntegrityChecker.h"
 #import "ISCJailbreakDetector.h"
 #import "ISCNetworkDetector.h"
@@ -341,7 +345,23 @@ static Method ISCResolveMethod(Class cls, SEL selector, BOOL isClassMethod) {
     return isClassMethod ? class_getClassMethod(cls, selector) : class_getInstanceMethod(cls, selector);
 }
 
-/// Detects that this package's own detectors were swizzled or hooked away from this image.
+/// `YES` when one of this package's own functions starts with a branch into code that is neither this
+/// image nor the OS. A branch that stays in this image is a tail call the compiler emitted, not a hook.
+static BOOL ISCOwnFunctionIsInlineHooked(const void *function, const void *ownBase) {
+    const void *target = NULL;
+    if (!ISCDecodeTrampoline(function, &target)) {
+        return NO;
+    }
+    const void *targetBase = NULL;
+    if (ISCImageForAddress(target, NULL, &targetBase) && targetBase == ownBase) {
+        return NO;
+    }
+    NSString *path = nil;
+    return !ISCAddressIsTrustedCode(target, @[], &path);
+}
+
+/// Detects that this package's own detectors were swizzled away from this image, or inline-patched
+/// where they stand. Both are what an attacker does first, before anything else is worth hiding.
 static NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
     const void *ownBase = NULL;
     if (!ISCImageForAddress(ISCCodeAddress(ISCSelfAnchor), NULL, &ownBase) || ownBase == NULL) {
@@ -367,11 +387,12 @@ static NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
     NSMutableArray<NSString *> *tampered = [NSMutableArray array];
     for (size_t index = 0; index < sizeof(targets) / sizeof(targets[0]); index++) {
         Method method = ISCResolveMethod(targets[index].cls, targets[index].selector, targets[index].isClassMethod);
+        const void *implementation = method != NULL ? ISCImplementationAddress(method) : NULL;
         const void *base = NULL;
-        BOOL isOurs = method != NULL &&
-                      ISCImageForAddress(ISCImplementationAddress(method), NULL, &base) &&
+        BOOL isOurs = implementation != NULL &&
+                      ISCImageForAddress(implementation, NULL, &base) &&
                       base == ownBase;
-        if (!isOurs) {
+        if (!isOurs || ISCOwnFunctionIsInlineHooked(implementation, ownBase)) {
             [tampered addObject:[NSString stringWithFormat:@"%c[%@ %@]",
                                  targets[index].isClassMethod ? '+' : '-',
                                  NSStringFromClass(targets[index].cls),
@@ -388,7 +409,14 @@ static NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
 
 // MARK: - ISCHookDetector
 
+@interface ISCHookDetector () <ISCDetector>
+@end
+
 @implementation ISCHookDetector
+
++ (ISCChecks)check {
+    return ISCChecksHooking;
+}
 
 + (NSArray<NSString *> *)loadedImagePaths {
     return ISCCopyLoadedImagePaths();
@@ -400,6 +428,9 @@ static NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
 }
 
 + (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    if (!ISCDetectorIsEnabled(self, options)) {
+        return @[];
+    }
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
     NSArray<NSString *> *images = ISCCopyLoadedImagePaths();
 

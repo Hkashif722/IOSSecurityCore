@@ -1,5 +1,12 @@
 // swift-tools-version: 5.9
-// The swift-tools-version declares the minimum version of Swift required to build this package.
+
+//
+//  Package.swift
+//  IOSSecurityCore
+//
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 import PackageDescription
 

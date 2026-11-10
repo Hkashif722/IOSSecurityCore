@@ -2,6 +2,9 @@
 //  ISCSecurityScannerTests.m
 //  IOSSecurityCoreObjCTests
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import <XCTest/XCTest.h>
 #import "ISCTestSupport.h"
@@ -54,6 +57,30 @@ static const void *ISCQueueKey = &ISCQueueKey;
 
     XCTAssertEqual(result.performedChecks, ISCChecksHooking);
     XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeJailbreakArtifact));
+}
+
+- (void)testEveryDetectorHonoursTheCheckSelectionOnItsOwn {
+    // The scanner skips disabled families, and each detector also refuses to run when called directly
+    // with options that exclude it. Both halves of that contract are checked here, for every family.
+    ISCScanOptions *options = ISCTestOptions();
+    options.checks = 0;
+    options.additionalSuspiciousPaths = @[NSTemporaryDirectory()];
+    options.additionalSuspiciousLibraries = @[@"Foundation"];
+    options.expectedBundleIdentifier = @"com.example.not-this-process";
+
+    XCTAssertEqual([ISCJailbreakDetector scanWithOptions:options].count, 0u);
+    XCTAssertEqual([ISCDebuggerDetector scanWithOptions:options].count, 0u);
+    XCTAssertEqual([ISCHookDetector scanWithOptions:options].count, 0u);
+    XCTAssertEqual([ISCIntegrityChecker scanWithOptions:options].count, 0u);
+    XCTAssertEqual([ISCNetworkDetector scanWithOptions:options].count, 0u);
+
+    // With the family enabled, the same options do produce the planted findings.
+    options.checks = ISCChecksJailbreak | ISCChecksHooking | ISCChecksIntegrity;
+    ISCScanResult *result = [[[ISCSecurityScanner alloc] initWithOptions:options] scan];
+    XCTAssertEqual(result.performedChecks, options.checks);
+    XCTAssertTrue(ISCContainsCode(result.findings, ISCFindingCodeJailbreakArtifact));
+    XCTAssertTrue(ISCContainsCode(result.findings, ISCFindingCodeHookInstrumentationLibrary));
+    XCTAssertTrue(ISCContainsCode(result.findings, ISCFindingCodeIntegrityBundleIdentifierMismatch));
 }
 
 - (void)testTheNetworkFamilyRunsOnItsOwn {

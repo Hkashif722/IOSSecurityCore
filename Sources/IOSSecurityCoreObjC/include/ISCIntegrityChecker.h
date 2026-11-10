@@ -2,6 +2,9 @@
 //  ISCIntegrityChecker.h
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Detects a repackaged, re-signed, cracked or patched app.
 //
 
@@ -62,8 +65,13 @@ ISC_RN_INTEGRITY_CHECKER
 /// Whether the main executable is FairPlay-encrypted.
 @property (class, nonatomic, readonly) ISCEncryptionState binaryEncryptionState;
 
-/// The contents of `embedded.mobileprovision`, or `nil` when the app has none (App Store, TestFlight)
-/// or it cannot be parsed.
+/// Whether the app bundle contains an `embedded.mobileprovision`. App Store and TestFlight builds have
+/// none; development, ad hoc and enterprise builds do. This is the signal the App Store expectation uses,
+/// so a profile that is present but unreadable still counts.
+@property (class, nonatomic, readonly) BOOL hasEmbeddedProvisioningProfile;
+
+/// The contents of `embedded.mobileprovision`, or `nil` when the app has none or it cannot be parsed.
+/// Use `hasEmbeddedProvisioningProfile` to ask only whether one exists.
 @property (class, nonatomic, readonly, nullable) NSDictionary<NSString *, id> *embeddedProvisioningProfile;
 
 /// Parses the entitlements out of a raw code-signature blob (the data `LC_CODE_SIGNATURE` points to).

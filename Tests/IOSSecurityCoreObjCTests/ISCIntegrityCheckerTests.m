@@ -2,6 +2,9 @@
 //  ISCIntegrityCheckerTests.m
 //  IOSSecurityCoreObjCTests
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import <XCTest/XCTest.h>
 #import "ISCTestSupport.h"
@@ -307,10 +310,20 @@ static NSString *ISCTestImageName(void) {
 
 // MARK: - Raw signals
 
+- (void)testProfilePresenceAgreesWithTheBundle {
+    // `hasEmbeddedProvisioningProfile` answers "is the file there", independently of whether it parses.
+    BOOL fileExists = [NSBundle.mainBundle pathForResource:@"embedded" ofType:@"mobileprovision"] != nil;
+    XCTAssertEqual(ISCIntegrityChecker.hasEmbeddedProvisioningProfile, fileExists);
+    if (ISCIntegrityChecker.embeddedProvisioningProfile != nil) {
+        XCTAssertTrue(ISCIntegrityChecker.hasEmbeddedProvisioningProfile, @"a parsed profile must also count as present");
+    }
+}
+
 - (void)testRawSignalsAreSafeToReadInAnyProcess {
     // None of these may crash, whatever the process is signed with.
     (void)ISCIntegrityChecker.codeSigningEntitlements;
     (void)ISCIntegrityChecker.codeSigningTeamIdentifier;
+    (void)ISCIntegrityChecker.hasEmbeddedProvisioningProfile;
     (void)ISCIntegrityChecker.embeddedProvisioningProfile;
     ISCEncryptionState state = ISCIntegrityChecker.binaryEncryptionState;
     XCTAssertTrue(state == ISCEncryptionStateUnknown || state == ISCEncryptionStateDecrypted ||

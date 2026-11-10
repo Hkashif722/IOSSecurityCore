@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More jailbreak indicators: Cephei, Substitute and libhbang preference bundles, `/usr/lib/substrate`,
   `/var/lib/dpkg`, `/var/log/apt`, and the PreferenceLoader, WeeLoader, Cephei and AppSyncUnified libraries.
 
+- `+[ISCIntegrityChecker hasEmbeddedProvisioningProfile]`: whether the profile file exists, separate from
+  whether it parses. The App Store expectation and `IntegritySignals` use it, so a present but unreadable
+  profile no longer passes as "none".
+- Author and license header in every source file.
+
 ### Changed
 - `ISCChecksAll` and `SecurityCheck.allCases` include the new `network` family.
-- The self-integrity check also covers `+[ISCDebuggerDetector scanWithOptions:]` and the network detector.
+- The self-integrity check also covers `+[ISCDebuggerDetector scanWithOptions:]` and the network detector,
+  and now also reports a detector whose implementation stayed in place but was inline-patched to branch
+  out of the package.
+- Detectors share a private `ISCDetector` contract; `ISCSecurityScanner` iterates that registry instead
+  of naming each family. Every detector now honours `ISCScanOptions.checks` when called directly (before,
+  only the debugger and network detectors did).
+- `SecurityEngine` keeps its configuration in an `OSAllocatedUnfairLock` instead of an `NSLock`.
+- `SecurityConfiguration.includesBuiltInIndicators` and `scansUnsupportedEnvironments` are test hooks and
+  now require `@_spi(Testing) import IOSSecurityCore`. The Objective-C properties are unchanged.

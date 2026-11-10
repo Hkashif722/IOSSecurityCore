@@ -2,6 +2,9 @@
 //
 //  text-digest.swift
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Prints the lowercase hex SHA-256 of a Mach-O binary's `__TEXT,__text` section: the value to put in
 //  `SecurityConfiguration.expectedTextSegmentDigests` (the app) or `expectedImageTextDigests` (a framework).
 //

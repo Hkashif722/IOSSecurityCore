@@ -1,3 +1,11 @@
+//
+//  TestSupport.swift
+//  IOSSecurityCoreTests
+//
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
+
 import Foundation
 
 /// A lock-protected box, for getting a result out of a `@Sendable` closure in a test.

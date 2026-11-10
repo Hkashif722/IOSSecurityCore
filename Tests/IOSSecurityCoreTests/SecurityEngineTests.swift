@@ -1,6 +1,14 @@
+//
+//  SecurityEngineTests.swift
+//  IOSSecurityCoreTests
+//
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
+
 import Combine
 import XCTest
-@testable import IOSSecurityCore
+@_spi(Testing) @testable import IOSSecurityCore
 
 final class SecurityEngineTests: XCTestCase {
 

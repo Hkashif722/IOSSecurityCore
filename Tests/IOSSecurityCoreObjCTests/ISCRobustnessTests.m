@@ -2,6 +2,9 @@
 //  ISCRobustnessTests.m
 //  IOSSecurityCoreObjCTests
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  The scan configuration comes from the host app and, through it, from remote configuration, plists and
 //  user input. A security SDK that crashes the app on a malformed entry is worse than none, so no value
 //  may ever raise or crash.

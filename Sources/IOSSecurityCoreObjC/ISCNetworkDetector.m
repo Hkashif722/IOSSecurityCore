@@ -2,8 +2,12 @@
 //  ISCNetworkDetector.m
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import "ISCNetworkDetector.h"
+#import "ISCDetector.h"
 #import "ISCObfuscation.h"
 
 #import <CFNetwork/CFNetwork.h>
@@ -97,7 +101,14 @@ static NSArray<NSString *> *ISCConfiguredProxyKinds(void) {
 
 // MARK: - ISCNetworkDetector
 
+@interface ISCNetworkDetector () <ISCDetector>
+@end
+
 @implementation ISCNetworkDetector
+
++ (ISCChecks)check {
+    return ISCChecksNetwork;
+}
 
 + (NSArray<NSString *> *)configuredProxyKinds {
     return ISCConfiguredProxyKinds();
@@ -108,7 +119,7 @@ static NSArray<NSString *> *ISCConfiguredProxyKinds(void) {
 }
 
 + (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
-    if ((options.checks & ISCChecksNetwork) == 0) {
+    if (!ISCDetectorIsEnabled(self, options)) {
         return @[];
     }
     NSArray<NSString *> *kinds = ISCConfiguredProxyKinds();

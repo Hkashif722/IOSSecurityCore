@@ -2,6 +2,9 @@
 //  ISCEnvironment.m
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import "ISCEnvironment.h"
 

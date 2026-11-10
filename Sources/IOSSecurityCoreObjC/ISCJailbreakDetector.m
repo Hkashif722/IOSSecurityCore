@@ -2,8 +2,12 @@
 //  ISCJailbreakDetector.m
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import "ISCJailbreakDetector.h"
+#import "ISCDetector.h"
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
 
@@ -289,9 +293,19 @@ static BOOL ISCForkSucceeds(void) {
 
 // MARK: - ISCJailbreakDetector
 
+@interface ISCJailbreakDetector () <ISCDetector>
+@end
+
 @implementation ISCJailbreakDetector
 
++ (ISCChecks)check {
+    return ISCChecksJailbreak;
+}
+
 + (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    if (!ISCDetectorIsEnabled(self, options)) {
+        return @[];
+    }
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
 
     // 1. Known files and directories.

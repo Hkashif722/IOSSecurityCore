@@ -2,6 +2,9 @@
 //  ISCObfuscation.h
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Compile-time string obfuscation.
 //
 //  Sensitive literals (jailbreak paths, hooking-framework names, `dlsym` symbol names, ...) must not

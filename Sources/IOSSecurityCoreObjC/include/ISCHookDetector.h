@@ -2,6 +2,9 @@
 //  ISCHookDetector.h
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Detects dynamic instrumentation and runtime manipulation.
 //
 
@@ -16,7 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
 ///
 /// The checks, in order:
 /// 1. **Self-integrity**: this package's own detector methods must still be implemented inside the
-///    image that contains them. A swizzled detector is the first thing an attacker does.
+///    image that contains them, and must not start with a branch out of it. A swizzled or inline-patched
+///    detector is the first thing an attacker does.
 ///    **System functions**: the libc, dyld and Objective-C runtime functions the detectors call
 ///    (`access`, `open`, `sysctl`, `getenv`, `_dyld_get_image_name`, ...) must be bound to the OS
 ///    (not rebound by fishhook or dyld interposing) and must not start with a branch out of it (an

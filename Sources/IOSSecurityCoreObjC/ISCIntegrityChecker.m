@@ -2,8 +2,12 @@
 //  ISCIntegrityChecker.m
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 
 #import "ISCIntegrityChecker.h"
+#import "ISCDetector.h"
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
 
@@ -213,9 +217,21 @@ static NSDictionary<NSString *, id> *ISCMainExecutableEntitlements(void) {
     return entitlements;
 }
 
+/// Where the embedded provisioning profile would be. Nil for App Store and TestFlight builds.
+static NSString *ISCEmbeddedProvisioningProfilePath(void) {
+    return [NSBundle.mainBundle pathForResource:@"embedded" ofType:@"mobileprovision"];
+}
+
 // MARK: - ISCIntegrityChecker
 
+@interface ISCIntegrityChecker () <ISCDetector>
+@end
+
 @implementation ISCIntegrityChecker
+
++ (ISCChecks)check {
+    return ISCChecksIntegrity;
+}
 
 // MARK: Raw signals
 
@@ -258,8 +274,12 @@ static NSDictionary<NSString *, id> *ISCMainExecutableEntitlements(void) {
     return state;
 }
 
++ (BOOL)hasEmbeddedProvisioningProfile {
+    return ISCEmbeddedProvisioningProfilePath() != nil;
+}
+
 + (NSDictionary<NSString *, id> *)embeddedProvisioningProfile {
-    NSString *path = [NSBundle.mainBundle pathForResource:@"embedded" ofType:@"mobileprovision"];
+    NSString *path = ISCEmbeddedProvisioningProfilePath();
     if (path == nil) {
         return nil;
     }
@@ -337,6 +357,9 @@ static NSDictionary<NSString *, id> *ISCMainExecutableEntitlements(void) {
 // MARK: Scan
 
 + (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    if (!ISCDetectorIsEnabled(self, options)) {
+        return @[];
+    }
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
 
     // 1. Bundle identifier: a re-signer who cannot reuse yours must change it.
@@ -367,7 +390,8 @@ static NSDictionary<NSString *, id> *ISCMainExecutableEntitlements(void) {
 
     // 3. App Store and TestFlight builds look a specific way; copies that were re-signed or dumped do not.
     if (options.expectedDistribution == ISCDistributionAppStore) {
-        if (self.embeddedProvisioningProfile != nil) {
+        // Presence is the signal. A profile that fails to parse is still a profile App Store builds do not have.
+        if (self.hasEmbeddedProvisioningProfile) {
             [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityUnexpectedProvisioningProfile
                                                           detail:nil]];
         }

@@ -2,6 +2,9 @@
 #
 # build-phase-audit.sh
 #
+# Created by Kashif Hussain on 2026-11-10.
+# Copyright © 2026 Kashif Hussain. MIT License.
+#
 # A compile-time gate for the *host app*. It inspects the linked binary the way an auditor would —
 # `strings`, `otool`, `nm`, without ever running the app — and fails the build when a name you declared
 # off-limits is visible, or (advisory) when the Swift reflection/symbol-stripping settings did not take.

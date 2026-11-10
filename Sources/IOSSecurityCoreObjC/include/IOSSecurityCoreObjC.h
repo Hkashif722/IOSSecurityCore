@@ -2,6 +2,9 @@
 //  IOSSecurityCoreObjC.h
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Umbrella header for the Objective-C runtime layer of IOSSecurityCore.
 //
 //  Everything here is built on documented Apple APIs (Foundation, <objc/runtime.h>, <dlfcn.h>, dyld,

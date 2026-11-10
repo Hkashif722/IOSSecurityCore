@@ -2,7 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- IOSSecurityCore inspects the device it runs on and reports to the host app. It collects nothing,
+	<!-- Created by Kashif Hussain on 2026-11-10. Copyright © 2026 Kashif Hussain. MIT License.
+
+	     IOSSecurityCore inspects the device it runs on and reports to the host app. It collects nothing,
 	     tracks nothing, and makes no network connection beyond a loopback probe. It also avoids every
 	     "required reason" API category, so it has nothing to declare. Scripts/audit-symbols.sh enforces that. -->
 	<key>NSPrivacyTracking</key>

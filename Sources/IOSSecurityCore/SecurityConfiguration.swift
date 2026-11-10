@@ -1,3 +1,11 @@
+//
+//  SecurityConfiguration.swift
+//  IOSSecurityCore
+//
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
+
 import Foundation
 
 /// Everything that tunes the engine. The defaults are safe to ship unchanged; the `expected…` values
@@ -62,14 +70,14 @@ public struct SecurityConfiguration: Sendable {
     public var checks: Set<SecurityCheck> = Set(SecurityCheck.allCases)
 
     /// When `false`, the built-in indicator lists and heuristics (including the parent-process check and
-    /// the system-function verification) are skipped and only the custom entries are used. Intended for
-    /// tests. Default: `true`.
-    public var includesBuiltInIndicators = true
+    /// the system-function verification) are skipped and only the custom entries are used. For tests;
+    /// import with `@_spi(Testing)` to reach it. Default: `true`.
+    @_spi(Testing) public var includesBuiltInIndicators = true
 
     /// Run the checks on the Simulator, on macOS and under Mac Catalyst too. Their results are not
-    /// meaningful there (the Simulator exposes the Mac's file system, for example). Intended for tests and
-    /// tooling. Default: `false`.
-    public var scansUnsupportedEnvironments = false
+    /// meaningful there (the Simulator exposes the Mac's file system, for example). For tests and tooling;
+    /// import with `@_spi(Testing)` to reach it. Default: `false`.
+    @_spi(Testing) public var scansUnsupportedEnvironments = false
 
     // MARK: Jailbreak
 

@@ -2,6 +2,9 @@
 //  ISCObfuscationConfig.h
 //  IOSSecurityCoreObjC
 //
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
 //  Build-time obfuscation switches. Nothing in this header changes behaviour; it only changes how
 //  the compiled binary names things.
 //

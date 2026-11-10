@@ -1,6 +1,15 @@
+//
+//  SecurityEngine.swift
+//  IOSSecurityCore
+//
+//  Created by Kashif Hussain on 2026-11-10.
+//  Copyright © 2026 Kashif Hussain. MIT License.
+//
+
 import Combine
 import Foundation
 import IOSSecurityCoreObjC
+import os
 
 /// Evaluates the runtime environment of the host app.
 ///
@@ -22,6 +31,8 @@ import IOSSecurityCoreObjC
 ///
 /// The engine only *reports*. What to do about a compromised device is the host app's decision, and the
 /// strongest version of that decision is made on a server.
+// `@unchecked` covers one member only: `reportSubject`. Combine's `PassthroughSubject` is not `Sendable`,
+// and every `send` happens on the serial `queue`. Everything else is a `let` or lives inside the lock.
 public final class SecurityEngine: @unchecked Sendable {
 
     /// The package version.
@@ -30,27 +41,26 @@ public final class SecurityEngine: @unchecked Sendable {
     /// A shared engine for apps that need only one.
     public static let shared = SecurityEngine()
 
-    private let lock = NSLock()
-    private var storedConfiguration: SecurityConfiguration
+    private let storedConfiguration: OSAllocatedUnfairLock<SecurityConfiguration>
     private let queue = DispatchQueue(label: "IOSSecurityCore.scan", qos: .utility)
     private let reportSubject = PassthroughSubject<SecurityReport, Never>()
 
     /// Creates an engine.
     /// - Parameter configuration: The initial configuration. Change it later with ``configure(_:)``.
     public init(configuration: SecurityConfiguration = .default) {
-        storedConfiguration = configuration
+        storedConfiguration = OSAllocatedUnfairLock(initialState: configuration)
     }
 
     // MARK: - Configuration
 
     /// The configuration in effect.
     public var configuration: SecurityConfiguration {
-        locked { storedConfiguration }
+        storedConfiguration.withLock { $0 }
     }
 
     /// Replaces the configuration. Evaluations that already started keep the one they began with.
     public func configure(_ configuration: SecurityConfiguration) {
-        locked { storedConfiguration = configuration }
+        storedConfiguration.withLock { $0 = configuration }
     }
 
     // MARK: - Evaluation
@@ -164,11 +174,5 @@ public final class SecurityEngine: @unchecked Sendable {
         let report = SecurityReport(ISCSecurityScanner(options: options).scan())
         reportSubject.send(report)
         return report
-    }
-
-    private func locked<Result>(_ body: () -> Result) -> Result {
-        lock.lock()
-        defer { lock.unlock() }
-        return body()
     }
 }
