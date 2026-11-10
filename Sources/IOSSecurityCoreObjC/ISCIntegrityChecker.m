@@ -1,0 +1,356 @@
+//
+//  ISCIntegrityChecker.m
+//  IOSSecurityCoreObjC
+//
+
+#import "ISCIntegrityChecker.h"
+#import "ISCObfuscation.h"
+#import "ISCRuntimeSupport.h"
+
+#import <CommonCrypto/CommonDigest.h>
+
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#include <string.h>
+
+// MARK: - Constants
+
+/// Code-signature container magic numbers and the slot that holds XML entitlements. These are fixed by
+/// the on-disk format (they are big-endian on disk).
+static const uint32_t ISCSuperBlobMagic = 0xfade0cc0;
+static const uint32_t ISCEntitlementsBlobMagic = 0xfade7171;
+static const uint32_t ISCEntitlementsSlot = 5;
+
+/// Sanity limits: real signatures are kilobytes. Anything bigger is corrupt, and a limit keeps a
+/// malformed one from making us copy or parse megabytes.
+static const uint64_t ISCMaximumSignatureSize = 16u * 1024 * 1024;
+static const uint64_t ISCMaximumPropertyListSize = 1u * 1024 * 1024;
+
+/// Bytes hashed per `CC_SHA256_Update` call. `CC_LONG` is 32-bit, so large sections are fed in pieces.
+static const size_t ISCDigestChunkSize = 1u << 20;
+
+// MARK: - Mach-O access
+
+typedef struct {
+    const struct mach_header_64 *header;
+    intptr_t slide;
+} ISCMainImage;
+
+/// The main executable's header and ASLR slide. dyld lists it first, but searching by file type does
+/// not depend on that.
+static BOOL ISCLocateMainImage(ISCMainImage *image) {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t index = 0; index < count; index++) {
+        const struct mach_header *header = _dyld_get_image_header(index);
+        if (header != NULL && header->magic == MH_MAGIC_64 && header->filetype == MH_EXECUTE) {
+            image->header = (const struct mach_header_64 *)header;
+            image->slide = _dyld_get_image_vmaddr_slide(index);
+            return YES;
+        }
+    }
+    return NO;
+}
+
+/// Calls `visit` for each load command, stopping at the first malformed one.
+static void ISCEnumerateLoadCommands(const struct mach_header_64 *header,
+                                     void (^visit)(const struct load_command *command)) {
+    const uint8_t *cursor = (const uint8_t *)(header + 1);
+    const uint8_t *end = cursor + header->sizeofcmds;
+    for (uint32_t index = 0; index < header->ncmds; index++) {
+        if ((size_t)(end - cursor) < sizeof(struct load_command)) {
+            return;
+        }
+        const struct load_command *command = (const struct load_command *)cursor;
+        if (command->cmdsize < sizeof(struct load_command) || command->cmdsize > (size_t)(end - cursor)) {
+            return;
+        }
+        visit(command);
+        cursor += command->cmdsize;
+    }
+}
+
+/// The raw code-signature blob of the main executable, copied out of its (read-only) `__LINKEDIT`
+/// segment. The kernel verified this signature when it mapped the binary.
+static NSData *ISCCopyMainExecutableSignature(void) {
+    ISCMainImage image;
+    if (!ISCLocateMainImage(&image)) {
+        return nil;
+    }
+
+    __block const struct linkedit_data_command *signatureCommand = NULL;
+    __block const struct segment_command_64 *linkedit = NULL;
+    ISCEnumerateLoadCommands(image.header, ^(const struct load_command *command) {
+        if (command->cmd == LC_CODE_SIGNATURE && command->cmdsize >= sizeof(struct linkedit_data_command)) {
+            signatureCommand = (const struct linkedit_data_command *)command;
+        } else if (command->cmd == LC_SEGMENT_64 && command->cmdsize >= sizeof(struct segment_command_64)) {
+            const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
+            if (strncmp(segment->segname, SEG_LINKEDIT, sizeof(segment->segname)) == 0) {
+                linkedit = segment;
+            }
+        }
+    });
+    if (signatureCommand == NULL || linkedit == NULL) {
+        return nil;
+    }
+
+    // dataoff is a file offset. Translate it to memory through __LINKEDIT, checking every step.
+    uint64_t dataOffset = signatureCommand->dataoff;
+    uint64_t dataSize = signatureCommand->datasize;
+    if (dataSize == 0 || dataSize > ISCMaximumSignatureSize) {
+        return nil;
+    }
+    if (dataOffset < linkedit->fileoff) {
+        return nil;
+    }
+    uint64_t offsetInSegment = dataOffset - linkedit->fileoff;
+    if (offsetInSegment > linkedit->filesize || dataSize > linkedit->filesize - offsetInSegment) {
+        return nil;
+    }
+
+    uint64_t address = (uint64_t)((int64_t)linkedit->vmaddr + (int64_t)offsetInSegment + (int64_t)image.slide);
+    return [NSData dataWithBytes:(const void *)(uintptr_t)address length:(NSUInteger)dataSize];
+}
+
+// MARK: - Code-signature parsing
+
+static inline uint32_t ISCReadBigEndian32(const uint8_t *bytes) {
+    return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) | ((uint32_t)bytes[2] << 8) | (uint32_t)bytes[3];
+}
+
+/// Parses a property list that must be a dictionary.
+static NSDictionary<NSString *, id> *ISCDictionaryFromPropertyListData(NSData *data) {
+    if (data.length == 0 || data.length > ISCMaximumPropertyListSize) {
+        return nil;
+    }
+    id object = [NSPropertyListSerialization propertyListWithData:data
+                                                          options:NSPropertyListImmutable
+                                                           format:NULL
+                                                            error:NULL];
+    return [object isKindOfClass:NSDictionary.class] ? object : nil;
+}
+
+// MARK: - Cached, immutable signals
+
+static NSDictionary<NSString *, id> *ISCMainExecutableEntitlements(void) {
+    static NSDictionary<NSString *, id> *entitlements;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSData *signature = ISCCopyMainExecutableSignature();
+        if (signature != nil) {
+            entitlements = [ISCIntegrityChecker entitlementsFromCodeSignatureData:signature];
+        }
+    });
+    return entitlements;
+}
+
+// MARK: - ISCIntegrityChecker
+
+@implementation ISCIntegrityChecker
+
+// MARK: Raw signals
+
++ (NSDictionary<NSString *, id> *)codeSigningEntitlements {
+    return ISCMainExecutableEntitlements();
+}
+
++ (NSString *)codeSigningTeamIdentifier {
+    return [self teamIdentifierFromEntitlements:ISCMainExecutableEntitlements()];
+}
+
++ (NSString *)teamIdentifierFromEntitlements:(NSDictionary<NSString *, id> *)entitlements {
+    id team = entitlements[@"com.apple.developer.team-identifier"];
+    if ([team isKindOfClass:NSString.class] && [team length] > 0) {
+        return team;
+    }
+    // "TEAMID.com.example.App": the Team ID is everything before the first dot.
+    id applicationIdentifier = entitlements[@"application-identifier"];
+    if ([applicationIdentifier isKindOfClass:NSString.class]) {
+        NSRange dot = [applicationIdentifier rangeOfString:@"."];
+        if (dot.location != NSNotFound && dot.location > 0) {
+            return [applicationIdentifier substringToIndex:dot.location];
+        }
+    }
+    return nil;
+}
+
++ (ISCEncryptionState)binaryEncryptionState {
+    ISCMainImage image;
+    if (!ISCLocateMainImage(&image)) {
+        return ISCEncryptionStateUnknown;
+    }
+    __block ISCEncryptionState state = ISCEncryptionStateUnknown;
+    ISCEnumerateLoadCommands(image.header, ^(const struct load_command *command) {
+        if (command->cmd == LC_ENCRYPTION_INFO_64 && command->cmdsize >= sizeof(struct encryption_info_command_64)) {
+            const struct encryption_info_command_64 *encryption = (const struct encryption_info_command_64 *)command;
+            state = encryption->cryptid != 0 ? ISCEncryptionStateEncrypted : ISCEncryptionStateDecrypted;
+        }
+    });
+    return state;
+}
+
++ (NSDictionary<NSString *, id> *)embeddedProvisioningProfile {
+    NSString *path = [NSBundle.mainBundle pathForResource:@"embedded" ofType:@"mobileprovision"];
+    if (path == nil) {
+        return nil;
+    }
+    NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:NULL];
+    if (data.length == 0 || data.length > ISCMaximumPropertyListSize) {
+        return nil;
+    }
+
+    // The profile is a CMS envelope around an XML property list. Cut the plist out instead of
+    // verifying the envelope: the kernel already verified the app, this only reads metadata.
+    NSData *startMarker = [@"<?xml" dataUsingEncoding:NSASCIIStringEncoding];
+    NSData *endMarker = [@"</plist>" dataUsingEncoding:NSASCIIStringEncoding];
+    NSRange start = [data rangeOfData:startMarker options:0 range:NSMakeRange(0, data.length)];
+    if (start.location == NSNotFound) {
+        return nil;
+    }
+    NSRange end = [data rangeOfData:endMarker
+                            options:0
+                              range:NSMakeRange(start.location, data.length - start.location)];
+    if (end.location == NSNotFound) {
+        return nil;
+    }
+    return ISCDictionaryFromPropertyListData(
+        [data subdataWithRange:NSMakeRange(start.location, NSMaxRange(end) - start.location)]);
+}
+
++ (NSString *)textSegmentDigest {
+    ISCMainImage image;
+    if (!ISCLocateMainImage(&image)) {
+        return nil;
+    }
+    unsigned long size = 0;
+    const uint8_t *text = getsectiondata(image.header, SEG_TEXT, SECT_TEXT, &size);
+    if (text == NULL || size == 0) {
+        return nil;
+    }
+
+    CC_SHA256_CTX context;
+    CC_SHA256_Init(&context);
+    size_t remaining = size;
+    while (remaining > 0) {
+        size_t chunk = remaining < ISCDigestChunkSize ? remaining : ISCDigestChunkSize;
+        CC_SHA256_Update(&context, text, (CC_LONG)chunk);
+        text += chunk;
+        remaining -= chunk;
+    }
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &context);
+
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (size_t index = 0; index < CC_SHA256_DIGEST_LENGTH; index++) {
+        [hex appendFormat:@"%02x", digest[index]];
+    }
+    return hex;
+}
+
++ (NSDictionary<NSString *, id> *)entitlementsFromCodeSignatureData:(NSData *)data {
+    const uint8_t *bytes = data.bytes;
+    uint64_t length = data.length;
+
+    // Layout (all big-endian): SuperBlob { magic, length, count, count x { type, offset } }, where each
+    // offset points at a blob { magic, length, payload } inside the SuperBlob.
+    if (bytes == NULL || length < 12 || ISCReadBigEndian32(bytes) != ISCSuperBlobMagic) {
+        return nil;
+    }
+    uint64_t superLength = ISCReadBigEndian32(bytes + 4);
+    uint64_t count = ISCReadBigEndian32(bytes + 8);
+    if (superLength < 12 || superLength > length || count > (superLength - 12) / 8) {
+        return nil;
+    }
+
+    for (uint64_t index = 0; index < count; index++) {
+        const uint8_t *entry = bytes + 12 + index * 8;
+        if (ISCReadBigEndian32(entry) != ISCEntitlementsSlot) {
+            continue;
+        }
+        uint64_t offset = ISCReadBigEndian32(entry + 4);
+        if (offset > superLength || superLength - offset < 8) {
+            continue;
+        }
+        const uint8_t *blob = bytes + offset;
+        uint64_t blobLength = ISCReadBigEndian32(blob + 4);
+        if (ISCReadBigEndian32(blob) != ISCEntitlementsBlobMagic ||
+            blobLength < 8 || blobLength > superLength - offset) {
+            continue;
+        }
+        return ISCDictionaryFromPropertyListData([NSData dataWithBytes:blob + 8
+                                                                length:(NSUInteger)(blobLength - 8)]);
+    }
+    return nil;
+}
+
+// MARK: Scan
+
++ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
+
+    // 1. Bundle identifier: a re-signer who cannot reuse yours must change it.
+    NSString *expectedBundleIdentifier = options.expectedBundleIdentifier;
+    if (expectedBundleIdentifier.length > 0) {
+        NSString *actual = NSBundle.mainBundle.bundleIdentifier;
+        if (![actual isEqualToString:expectedBundleIdentifier]) {
+            [findings addObject:[[ISCFinding alloc]
+                initWithCode:ISCFindingCodeIntegrityBundleIdentifierMismatch
+                      detail:[NSString stringWithFormat:@"expected %@, found %@",
+                              expectedBundleIdentifier, actual != nil ? actual : @"none"]]];
+        }
+    }
+
+    // 2. Team ID from the code signature: a re-signer cannot reuse yours.
+    NSString *expectedTeamIdentifier = options.expectedTeamIdentifier;
+    if (expectedTeamIdentifier.length > 0) {
+        NSString *actual = self.codeSigningTeamIdentifier;
+        if (actual == nil) {
+            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTeamIdentifierUnavailable
+                                                          detail:nil]];
+        } else if ([actual caseInsensitiveCompare:expectedTeamIdentifier] != NSOrderedSame) {
+            [findings addObject:[[ISCFinding alloc]
+                initWithCode:ISCFindingCodeIntegrityTeamIdentifierMismatch
+                      detail:[NSString stringWithFormat:@"expected %@, found %@", expectedTeamIdentifier, actual]]];
+        }
+    }
+
+    // 3. App Store and TestFlight builds look a specific way; copies that were re-signed or dumped do not.
+    if (options.expectedDistribution == ISCDistributionAppStore) {
+        if (self.embeddedProvisioningProfile != nil) {
+            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityUnexpectedProvisioningProfile
+                                                          detail:nil]];
+        }
+        if (self.binaryEncryptionState == ISCEncryptionStateDecrypted) {
+            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityBinaryDecrypted detail:nil]];
+        }
+        id getTaskAllow = ISCMainExecutableEntitlements()[@"get-task-allow"];
+        if ([getTaskAllow isKindOfClass:NSNumber.class] && [getTaskAllow boolValue]) {
+            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityDebuggableBuild detail:nil]];
+        }
+    }
+
+    // 4. The code itself.
+    if (options.expectedTextSegmentDigests.count > 0) {
+        NSString *digest = self.textSegmentDigest;
+        if (digest == nil) {
+            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentUnavailable
+                                                          detail:nil]];
+        } else {
+            BOOL isExpected = NO;
+            for (NSString *expected in options.expectedTextSegmentDigests) {
+                if ([expected caseInsensitiveCompare:digest] == NSOrderedSame) {
+                    isExpected = YES;
+                    break;
+                }
+            }
+            if (!isExpected) {
+                [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentModified
+                                                              detail:digest]];
+            }
+        }
+    }
+
+    return findings;
+}
+
+@end
