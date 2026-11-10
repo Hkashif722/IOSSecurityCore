@@ -11,6 +11,8 @@ public enum SecurityCheck: String, CaseIterable, Hashable, Sendable, Codable {
     case hooking
     /// A re-signed, repackaged, cracked or patched app.
     case integrity
+    /// Traffic interception: a configured HTTP, HTTPS, SOCKS or auto-config proxy.
+    case network
 }
 
 extension SecurityCheck {
@@ -20,6 +22,7 @@ extension SecurityCheck {
         case .debugger: return .debugger
         case .hooking: return .hooking
         case .integrity: return .integrity
+        case .network: return .network
         }
     }
 }

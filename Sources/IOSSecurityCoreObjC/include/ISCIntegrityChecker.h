@@ -24,6 +24,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// 3. With `ISCDistributionAppStore`: no embedded provisioning profile, an encrypted binary, and no
 ///    `get-task-allow` entitlement.
 /// 4. The SHA-256 of the `__TEXT,__text` section against `expectedTextSegmentDigests`.
+/// 5. The same for embedded dynamic libraries, against `expectedImageTextDigests`.
 ///
 /// The raw signals are also exposed, so you can send them to a server and decide there. A decision made
 /// on a server cannot be patched out of the app.
@@ -43,6 +44,12 @@ ISC_RN_INTEGRITY_CHECKER
 /// This reads the whole code section, which pages in (and, for App Store builds, decrypts) the entire
 /// binary. Call it at most once per launch, on a background queue.
 @property (class, nonatomic, readonly, nullable) NSString *textSegmentDigest;
+
+/// Lowercase hex SHA-256 of the `__TEXT,__text` section of a loaded library, or `nil` if no loaded
+/// library's path ends in the path components `name` (for example `Auth.framework/Auth`) or its code
+/// cannot be read. Libraries inside the app bundle are preferred. Same cost caveats as
+/// `textSegmentDigest`.
++ (nullable NSString *)textSegmentDigestOfImageNamed:(NSString *)name;
 
 /// The entitlements embedded in the main executable's code signature, or `nil` if there are none or
 /// they cannot be read. The kernel validated this signature when it loaded the binary.

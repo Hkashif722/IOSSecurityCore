@@ -144,4 +144,67 @@
     XCTAssertEqual(openDescriptorCount(), before);
 }
 
+// MARK: - Bypass tools
+
+- (void)testARegisteredSuspiciousClassIsABypassTool {
+    ISCScanOptions *options = ISCTestOptions();
+    options.additionalSuspiciousClasses = @[NSStringFromClass(self.class)];
+
+    ISCFinding *finding = ISCFindingWithCode([ISCJailbreakDetector scanWithOptions:options], ISCFindingCodeJailbreakBypassTool);
+    XCTAssertNotNil(finding);
+    XCTAssertEqual(finding.severity, ISCSeverityHigh);
+    XCTAssertEqual(finding.category, ISCCategoryJailbreak);
+    XCTAssertTrue([finding.detail containsString:NSStringFromClass(self.class)], @"%@", finding.detail);
+}
+
+- (void)testAnUnregisteredClassIsNotReported {
+    ISCScanOptions *options = ISCTestOptions();
+    options.additionalSuspiciousClasses = @[@"ISCNoSuchClassAnywhere_XYZ"];
+    XCTAssertFalse(ISCContainsCode([ISCJailbreakDetector scanWithOptions:options], ISCFindingCodeJailbreakBypassTool));
+}
+
+- (void)testRegisteredClassesAmongKeepsOnlyRegisteredOnes {
+    NSArray<NSString *> *registered =
+        [ISCJailbreakDetector registeredClassesAmong:@[@"NSObject", @"ISCNoSuchClassAnywhere_XYZ", @"", @"NSString"]];
+    XCTAssertEqualObjects(registered, (@[@"NSObject", @"NSString"]));
+}
+
+- (void)testBuiltInBypassIndicatorsDoNotFlagTheTestProcess {
+    ISCScanOptions *options = ISCTestOptions();
+    options.includesBuiltInIndicators = YES;
+    XCTAssertFalse(ISCContainsCode([ISCJailbreakDetector scanWithOptions:options], ISCFindingCodeJailbreakBypassTool));
+}
+
+// MARK: - Remote shell ports
+
+- (void)testDetectsAListenerOnARemoteShellPort {
+    // 44 rather than 22: a developer Mac with Remote Login on already listens on 22.
+    int listener = ISCOpenLoopbackListener(44);
+    if (listener < 0) {
+        XCTSkip(@"Port 44 cannot be bound on this machine.");
+    }
+    ISCScanOptions *options = ISCTestOptions();
+    options.includesBuiltInIndicators = YES;
+    options.probesRemoteShellPorts = YES;
+
+    ISCFinding *finding = ISCFindingWithCode([ISCJailbreakDetector scanWithOptions:options],
+                                             ISCFindingCodeJailbreakRemoteShellPort);
+    XCTAssertNotNil(finding);
+    XCTAssertEqual(finding.severity, ISCSeverityHigh);
+    XCTAssertTrue([[finding.detail componentsSeparatedByString:@", "] containsObject:@"44"], @"%@", finding.detail);
+
+    close(listener);
+    ISCFinding *after = ISCFindingWithCode([ISCJailbreakDetector scanWithOptions:options],
+                                           ISCFindingCodeJailbreakRemoteShellPort);
+    XCTAssertFalse([[after.detail componentsSeparatedByString:@", "] containsObject:@"44"],
+                   @"a closed port must not be reported: %@", after.detail);
+}
+
+- (void)testRemoteShellProbeCanBeSwitchedOff {
+    ISCScanOptions *options = ISCTestOptions();
+    options.includesBuiltInIndicators = YES;
+    options.probesRemoteShellPorts = NO;
+    XCTAssertFalse(ISCContainsCode([ISCJailbreakDetector scanWithOptions:options], ISCFindingCodeJailbreakRemoteShellPort));
+}
+
 @end

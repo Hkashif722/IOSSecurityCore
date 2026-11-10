@@ -13,16 +13,21 @@ static NSArray<NSNumber *> *ISCAllCodes(void) {
         @(ISCFindingCodeJailbreakArtifact), @(ISCFindingCodeJailbreakSymlink),
         @(ISCFindingCodeJailbreakSandboxEscape), @(ISCFindingCodeJailbreakForkAllowed),
         @(ISCFindingCodeJailbreakInjectedLibrary), @(ISCFindingCodeJailbreakInjectionEnvironment),
-        @(ISCFindingCodeDebuggerAttached),
+        @(ISCFindingCodeJailbreakBypassTool), @(ISCFindingCodeJailbreakRemoteShellPort),
+        @(ISCFindingCodeDebuggerAttached), @(ISCFindingCodeDebuggerHardwareBreakpoint),
+        @(ISCFindingCodeDebuggerUnexpectedParent),
         @(ISCFindingCodeHookInstrumentationLibrary), @(ISCFindingCodeHookInstrumentationPort),
         @(ISCFindingCodeHookInstrumentationThread), @(ISCFindingCodeHookInstrumentationArtifact),
         @(ISCFindingCodeHookUnknownLibrary), @(ISCFindingCodeHookSwizzledMethod),
         @(ISCFindingCodeHookProtectedMethodUnresolved), @(ISCFindingCodeHookSelfIntegrity),
-        @(ISCFindingCodeHookUnexpectedBundleLibrary),
+        @(ISCFindingCodeHookUnexpectedBundleLibrary), @(ISCFindingCodeHookInlinePatchedFunction),
+        @(ISCFindingCodeHookReboundSymbol),
         @(ISCFindingCodeIntegrityBundleIdentifierMismatch), @(ISCFindingCodeIntegrityTeamIdentifierMismatch),
         @(ISCFindingCodeIntegrityBinaryDecrypted), @(ISCFindingCodeIntegrityTextSegmentModified),
         @(ISCFindingCodeIntegrityDebuggableBuild), @(ISCFindingCodeIntegrityUnexpectedProvisioningProfile),
         @(ISCFindingCodeIntegrityTeamIdentifierUnavailable), @(ISCFindingCodeIntegrityTextSegmentUnavailable),
+        @(ISCFindingCodeIntegrityImageModified), @(ISCFindingCodeIntegrityImageUnavailable),
+        @(ISCFindingCodeNetworkProxy),
     ];
 }
 
@@ -50,6 +55,7 @@ static NSArray<NSNumber *> *ISCAllCodes(void) {
         @(ISCCategoryDebugger): @"debugger.",
         @(ISCCategoryHooking): @"hooking.",
         @(ISCCategoryIntegrity): @"integrity.",
+        @(ISCCategoryNetwork): @"network.",
     };
     for (NSNumber *number in ISCAllCodes()) {
         ISCFinding *finding = [[ISCFinding alloc] initWithCode:(ISCFindingCode)number.integerValue detail:nil];
@@ -73,20 +79,28 @@ static NSArray<NSNumber *> *ISCAllCodes(void) {
                                         @(ISCFindingCodeHookSelfIntegrity),
                                         @(ISCFindingCodeIntegrityBundleIdentifierMismatch),
                                         @(ISCFindingCodeIntegrityTeamIdentifierMismatch),
-                                        @(ISCFindingCodeIntegrityTextSegmentModified)];
+                                        @(ISCFindingCodeIntegrityTextSegmentModified),
+                                        @(ISCFindingCodeIntegrityImageModified),
+                                        @(ISCFindingCodeHookInlinePatchedFunction),
+                                        @(ISCFindingCodeHookReboundSymbol)];
     for (NSNumber *number in conclusive) {
         ISCFinding *finding = [[ISCFinding alloc] initWithCode:(ISCFindingCode)number.integerValue detail:nil];
         XCTAssertEqual(finding.severity, ISCSeverityCritical, @"code %@", number);
     }
     // "Could not verify" must be weaker than "verified wrong": unreadable data is not proof of tampering.
-    XCTAssertLessThan([[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTeamIdentifierUnavailable detail:nil].severity,
-                      ISCSeverityHigh);
-    XCTAssertLessThan([[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentUnavailable detail:nil].severity,
-                      ISCSeverityHigh);
-    // A heuristic must not compromise a device by itself.
-    XCTAssertLessThan([[ISCFinding alloc] initWithCode:ISCFindingCodeHookUnknownLibrary detail:nil].severity, ISCSeverityHigh);
-    XCTAssertLessThan([[ISCFinding alloc] initWithCode:ISCFindingCodeHookInstrumentationThread detail:nil].severity,
-                      ISCSeverityHigh);
+    NSArray<NSNumber *> *weak = @[@(ISCFindingCodeIntegrityTeamIdentifierUnavailable),
+                                  @(ISCFindingCodeIntegrityTextSegmentUnavailable),
+                                  @(ISCFindingCodeIntegrityImageUnavailable),
+                                  // A heuristic, or something legitimate software also produces, must not
+                                  // compromise a device by itself.
+                                  @(ISCFindingCodeHookUnknownLibrary),
+                                  @(ISCFindingCodeHookInstrumentationThread),
+                                  @(ISCFindingCodeDebuggerUnexpectedParent),
+                                  @(ISCFindingCodeNetworkProxy)];
+    for (NSNumber *number in weak) {
+        ISCFinding *finding = [[ISCFinding alloc] initWithCode:(ISCFindingCode)number.integerValue detail:nil];
+        XCTAssertLessThan(finding.severity, ISCSeverityHigh, @"code %@", number);
+    }
 }
 
 - (void)testCodeValuesAreStable {
@@ -97,6 +111,15 @@ static NSArray<NSNumber *> *ISCAllCodes(void) {
     XCTAssertEqual((NSInteger)ISCFindingCodeHookInstrumentationLibrary, 400);
     XCTAssertEqual((NSInteger)ISCFindingCodeIntegrityBundleIdentifierMismatch, 500);
     XCTAssertEqual((NSInteger)ISCFindingCodeIntegrityTextSegmentUnavailable, 507);
+    XCTAssertEqual((NSInteger)ISCFindingCodeJailbreakBypassTool, 206);
+    XCTAssertEqual((NSInteger)ISCFindingCodeJailbreakRemoteShellPort, 207);
+    XCTAssertEqual((NSInteger)ISCFindingCodeDebuggerHardwareBreakpoint, 301);
+    XCTAssertEqual((NSInteger)ISCFindingCodeDebuggerUnexpectedParent, 302);
+    XCTAssertEqual((NSInteger)ISCFindingCodeHookInlinePatchedFunction, 409);
+    XCTAssertEqual((NSInteger)ISCFindingCodeHookReboundSymbol, 410);
+    XCTAssertEqual((NSInteger)ISCFindingCodeIntegrityImageModified, 508);
+    XCTAssertEqual((NSInteger)ISCFindingCodeIntegrityImageUnavailable, 509);
+    XCTAssertEqual((NSInteger)ISCFindingCodeNetworkProxy, 600);
 }
 
 - (void)testFindingIsImmutableAndCopyReturnsSelf {
@@ -136,13 +159,22 @@ static NSArray<NSNumber *> *ISCAllCodes(void) {
     ISCScanOptions *original = [ISCScanOptions defaultOptions];
     original.expectedBundleIdentifier = @"com.example";
     original.additionalSuspiciousPaths = @[@"/a"];
+    original.additionalSuspiciousClasses = @[@"A"];
+    original.probesRemoteShellPorts = NO;
+    original.expectedImageTextDigests = @{@"A.framework/A": @[@"aa"]};
 
     ISCScanOptions *copy = [original copy];
     original.expectedBundleIdentifier = @"com.changed";
     original.additionalSuspiciousPaths = @[@"/b"];
+    original.additionalSuspiciousClasses = @[@"B"];
+    original.probesRemoteShellPorts = YES;
+    original.expectedImageTextDigests = @{};
 
     XCTAssertEqualObjects(copy.expectedBundleIdentifier, @"com.example");
     XCTAssertEqualObjects(copy.additionalSuspiciousPaths, @[@"/a"]);
+    XCTAssertEqualObjects(copy.additionalSuspiciousClasses, @[@"A"]);
+    XCTAssertFalse(copy.probesRemoteShellPorts);
+    XCTAssertEqualObjects(copy.expectedImageTextDigests, (@{@"A.framework/A": @[@"aa"]}));
 }
 
 - (void)testOptionsDefaults {
@@ -154,9 +186,13 @@ static NSArray<NSNumber *> *ISCAllCodes(void) {
     XCTAssertTrue(options.performsForkProbe);
     XCTAssertTrue(options.reportsUnknownLibraries);
     XCTAssertTrue(options.probesInstrumentationPorts);
+    XCTAssertTrue(options.probesRemoteShellPorts);
     XCTAssertEqual(options.expectedDistribution, ISCDistributionAny);
     XCTAssertEqual(options.allowedBundleLibraries.count, 0u);
+    XCTAssertEqual(options.additionalSuspiciousClasses.count, 0u);
     XCTAssertEqual(options.expectedTextSegmentDigests.count, 0u);
+    XCTAssertEqual(options.expectedImageTextDigests.count, 0u);
+    XCTAssertTrue((options.checks & ISCChecksNetwork) != 0, @"the network family is part of a default scan");
     XCTAssertNil(options.expectedBundleIdentifier);
     XCTAssertNil(options.expectedTeamIdentifier);
 }

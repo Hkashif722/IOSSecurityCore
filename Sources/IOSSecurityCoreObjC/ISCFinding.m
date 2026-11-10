@@ -26,15 +26,22 @@ static ISCCodeTraits ISCTraitsForCode(ISCFindingCode code) {
         case ISCFindingCodeJailbreakForkAllowed:
         case ISCFindingCodeJailbreakInjectedLibrary:
         case ISCFindingCodeJailbreakInjectionEnvironment:
+        case ISCFindingCodeJailbreakBypassTool:
+        case ISCFindingCodeJailbreakRemoteShellPort:
             return (ISCCodeTraits){ISCCategoryJailbreak, ISCSeverityHigh};
         case ISCFindingCodeJailbreakSandboxEscape:
             return (ISCCodeTraits){ISCCategoryJailbreak, ISCSeverityCritical};
 
         case ISCFindingCodeDebuggerAttached:
+        case ISCFindingCodeDebuggerHardwareBreakpoint:
             return (ISCCodeTraits){ISCCategoryDebugger, ISCSeverityHigh};
+        case ISCFindingCodeDebuggerUnexpectedParent:
+            return (ISCCodeTraits){ISCCategoryDebugger, ISCSeverityMedium};
 
         case ISCFindingCodeHookInstrumentationLibrary:
         case ISCFindingCodeHookSelfIntegrity:
+        case ISCFindingCodeHookInlinePatchedFunction:
+        case ISCFindingCodeHookReboundSymbol:
             return (ISCCodeTraits){ISCCategoryHooking, ISCSeverityCritical};
         case ISCFindingCodeHookInstrumentationPort:
         case ISCFindingCodeHookInstrumentationArtifact:
@@ -50,6 +57,7 @@ static ISCCodeTraits ISCTraitsForCode(ISCFindingCode code) {
         case ISCFindingCodeIntegrityBundleIdentifierMismatch:
         case ISCFindingCodeIntegrityTeamIdentifierMismatch:
         case ISCFindingCodeIntegrityTextSegmentModified:
+        case ISCFindingCodeIntegrityImageModified:
             return (ISCCodeTraits){ISCCategoryIntegrity, ISCSeverityCritical};
         case ISCFindingCodeIntegrityBinaryDecrypted:
         case ISCFindingCodeIntegrityDebuggableBuild:
@@ -57,7 +65,12 @@ static ISCCodeTraits ISCTraitsForCode(ISCFindingCode code) {
             return (ISCCodeTraits){ISCCategoryIntegrity, ISCSeverityHigh};
         case ISCFindingCodeIntegrityTeamIdentifierUnavailable:
         case ISCFindingCodeIntegrityTextSegmentUnavailable:
+        case ISCFindingCodeIntegrityImageUnavailable:
             return (ISCCodeTraits){ISCCategoryIntegrity, ISCSeverityMedium};
+
+        case ISCFindingCodeNetworkProxy:
+            // Corporate and school networks configure proxies legitimately.
+            return (ISCCodeTraits){ISCCategoryNetwork, ISCSeverityMedium};
     }
     return (ISCCodeTraits){ISCCategoryEnvironment, ISCSeverityInfo};
 }
@@ -84,9 +97,17 @@ static NSString *ISCIdentifierForCode(ISCFindingCode code) {
             return ISC_OBF_NSSTRING("jailbreak.injected_library");
         case ISCFindingCodeJailbreakInjectionEnvironment:
             return ISC_OBF_NSSTRING("jailbreak.injection_environment");
+        case ISCFindingCodeJailbreakBypassTool:
+            return ISC_OBF_NSSTRING("jailbreak.bypass_tool");
+        case ISCFindingCodeJailbreakRemoteShellPort:
+            return ISC_OBF_NSSTRING("jailbreak.remote_shell_port");
 
         case ISCFindingCodeDebuggerAttached:
             return ISC_OBF_NSSTRING("debugger.attached");
+        case ISCFindingCodeDebuggerHardwareBreakpoint:
+            return ISC_OBF_NSSTRING("debugger.hardware_breakpoint");
+        case ISCFindingCodeDebuggerUnexpectedParent:
+            return ISC_OBF_NSSTRING("debugger.unexpected_parent");
 
         case ISCFindingCodeHookInstrumentationLibrary:
             return ISC_OBF_NSSTRING("hooking.instrumentation_library");
@@ -106,6 +127,10 @@ static NSString *ISCIdentifierForCode(ISCFindingCode code) {
             return ISC_OBF_NSSTRING("hooking.self_integrity");
         case ISCFindingCodeHookUnexpectedBundleLibrary:
             return ISC_OBF_NSSTRING("hooking.unexpected_bundle_library");
+        case ISCFindingCodeHookInlinePatchedFunction:
+            return ISC_OBF_NSSTRING("hooking.inline_patched_function");
+        case ISCFindingCodeHookReboundSymbol:
+            return ISC_OBF_NSSTRING("hooking.rebound_symbol");
 
         case ISCFindingCodeIntegrityBundleIdentifierMismatch:
             return ISC_OBF_NSSTRING("integrity.bundle_identifier_mismatch");
@@ -123,6 +148,13 @@ static NSString *ISCIdentifierForCode(ISCFindingCode code) {
             return ISC_OBF_NSSTRING("integrity.team_identifier_unavailable");
         case ISCFindingCodeIntegrityTextSegmentUnavailable:
             return ISC_OBF_NSSTRING("integrity.text_segment_unavailable");
+        case ISCFindingCodeIntegrityImageModified:
+            return ISC_OBF_NSSTRING("integrity.image_modified");
+        case ISCFindingCodeIntegrityImageUnavailable:
+            return ISC_OBF_NSSTRING("integrity.image_unavailable");
+
+        case ISCFindingCodeNetworkProxy:
+            return ISC_OBF_NSSTRING("network.proxy");
     }
     return ISC_OBF_NSSTRING("unknown");
 }

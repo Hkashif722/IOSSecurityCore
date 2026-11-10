@@ -56,6 +56,16 @@ static const void *ISCQueueKey = &ISCQueueKey;
     XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeJailbreakArtifact));
 }
 
+- (void)testTheNetworkFamilyRunsOnItsOwn {
+    ISCScanOptions *options = ISCTestOptions();
+    options.checks = ISCChecksNetwork;
+    ISCScanResult *result = [[[ISCSecurityScanner alloc] initWithOptions:options] scan];
+    XCTAssertEqual(result.performedChecks, ISCChecksNetwork);
+    for (ISCFinding *finding in result.findings) {
+        XCTAssertEqual(finding.category, ISCCategoryNetwork, @"%@", finding);
+    }
+}
+
 - (void)testNoFamiliesMeansNothingRuns {
     ISCScanOptions *options = ISCTestOptions();
     options.checks = 0;

@@ -15,6 +15,8 @@ final class SecurityConfigurationTests: XCTestCase {
         XCTAssertEqual(swift.additionalSuspiciousPaths, objc.additionalSuspiciousPaths)
         XCTAssertEqual(swift.performsSandboxWriteProbe, objc.performsSandboxWriteProbe)
         XCTAssertEqual(swift.performsForkProbe, objc.performsForkProbe)
+        XCTAssertEqual(swift.additionalSuspiciousClasses, objc.additionalSuspiciousClasses)
+        XCTAssertEqual(swift.probesRemoteShellPorts, objc.probesRemoteShellPorts)
         XCTAssertEqual(swift.additionalSuspiciousLibraries, objc.additionalSuspiciousLibraries)
         XCTAssertEqual(swift.allowedImagePathPrefixes, objc.allowedImagePathPrefixes)
         XCTAssertEqual(swift.reportsUnknownLibraries, objc.reportsUnknownLibraries)
@@ -24,6 +26,7 @@ final class SecurityConfigurationTests: XCTestCase {
         XCTAssertEqual(swift.expectedBundleIdentifier, objc.expectedBundleIdentifier)
         XCTAssertEqual(swift.expectedTeamIdentifier, objc.expectedTeamIdentifier)
         XCTAssertEqual(swift.expectedTextSegmentDigests, objc.expectedTextSegmentDigests)
+        XCTAssertEqual(swift.expectedImageTextDigests, objc.expectedImageTextDigests)
         XCTAssertEqual(swift.expectedDistribution, objc.expectedDistribution)
     }
 
@@ -35,6 +38,8 @@ final class SecurityConfigurationTests: XCTestCase {
         configuration.additionalSuspiciousPaths = ["/a", "/b"]
         configuration.performsSandboxWriteProbe = false
         configuration.performsForkProbe = false
+        configuration.additionalSuspiciousClasses = ["HideMe"]
+        configuration.probesRemoteShellPorts = false
         configuration.additionalSuspiciousLibraries = ["evil"]
         configuration.allowedImagePathPrefixes = ["/opt/"]
         configuration.reportsUnknownLibraries = false
@@ -47,10 +52,15 @@ final class SecurityConfigurationTests: XCTestCase {
         configuration.expectedBundleIdentifier = "com.example.app"
         configuration.expectedTeamIdentifier = "ABCDE12345"
         configuration.expectedTextSegmentDigests = ["bb", "aa"]
+        configuration.expectedImageTextDigests = ["Auth.framework/Auth": ["dd", "cc"]]
         configuration.expectedDistribution = .appStore
 
         let options = configuration.makeScanOptions()
         XCTAssertEqual(options.checks, [.jailbreak, .integrity])
+        XCTAssertEqual(options.additionalSuspiciousClasses, ["HideMe"])
+        XCTAssertFalse(options.probesRemoteShellPorts)
+        XCTAssertEqual(options.expectedImageTextDigests, ["Auth.framework/Auth": ["cc", "dd"]],
+                       "a Set has no order; the forwarded list must be stable")
         XCTAssertFalse(options.includesBuiltInIndicators)
         XCTAssertTrue(options.scansUnsupportedEnvironments)
         XCTAssertEqual(options.additionalSuspiciousPaths, ["/a", "/b"])

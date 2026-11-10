@@ -43,11 +43,19 @@ public struct SecurityThreat: Hashable, Sendable, Codable, CustomStringConvertib
         public static let jailbreakInjectedLibrary = Kind(.jailbreakInjectedLibrary)
         /// `DYLD_INSERT_LIBRARIES` names a library that is not developer tooling.
         public static let jailbreakInjectionEnvironment = Kind(.jailbreakInjectionEnvironment)
+        /// A jailbreak-detection bypass tool (Shadow, A-Bypass, FlyJB, ...) is installed or loaded.
+        public static let jailbreakBypassTool = Kind(.jailbreakBypassTool)
+        /// Something listens on a loopback port only a jailbreak opens (SSH 22, checkra1n 44).
+        public static let jailbreakRemoteShellPort = Kind(.jailbreakRemoteShellPort)
 
         // Debugger
 
         /// A debugger is attached to the process.
         public static let debuggerAttached = Kind(.debuggerAttached)
+        /// A thread has a hardware breakpoint or watchpoint armed.
+        public static let debuggerHardwareBreakpoint = Kind(.debuggerHardwareBreakpoint)
+        /// The app was not launched by launchd, usually because a debugger launched it.
+        public static let debuggerUnexpectedParent = Kind(.debuggerUnexpectedParent)
 
         // Hooking
 
@@ -69,6 +77,10 @@ public struct SecurityThreat: Hashable, Sendable, Codable, CustomStringConvertib
         public static let hookSelfIntegrity = Kind(.hookSelfIntegrity)
         /// A dynamic library you did not ship is loaded from inside the app bundle.
         public static let hookUnexpectedBundleLibrary = Kind(.hookUnexpectedBundleLibrary)
+        /// A system function the checks rely on was inline-patched to branch out of the OS.
+        public static let hookInlinePatchedFunction = Kind(.hookInlinePatchedFunction)
+        /// A system function the checks rely on is bound to code outside the OS (fishhook, interposing).
+        public static let hookReboundSymbol = Kind(.hookReboundSymbol)
 
         // Integrity
 
@@ -88,6 +100,15 @@ public struct SecurityThreat: Hashable, Sendable, Codable, CustomStringConvertib
         public static let integrityTeamIdentifierUnavailable = Kind(.integrityTeamIdentifierUnavailable)
         /// The code section could not be read, so its digest could not be checked.
         public static let integrityTextSegmentUnavailable = Kind(.integrityTextSegmentUnavailable)
+        /// An embedded library's code section digest is not one of the expected digests.
+        public static let integrityImageModified = Kind(.integrityImageModified)
+        /// An embedded library listed in the expected digests is not loaded or cannot be read.
+        public static let integrityImageUnavailable = Kind(.integrityImageUnavailable)
+
+        // Network
+
+        /// An HTTP, HTTPS, SOCKS or auto-config (PAC) proxy is configured.
+        public static let networkProxy = Kind(.networkProxy)
     }
 
     /// The detector family a threat belongs to.
@@ -98,6 +119,7 @@ public struct SecurityThreat: Hashable, Sendable, Codable, CustomStringConvertib
         case debugger
         case hooking
         case integrity
+        case network
     }
 
     /// How seriously to take a threat. ``high`` and ``critical`` mean the environment is not trustworthy.

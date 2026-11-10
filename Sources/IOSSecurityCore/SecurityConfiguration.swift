@@ -61,8 +61,9 @@ public struct SecurityConfiguration: Sendable {
     /// The check families to run. Default: all.
     public var checks: Set<SecurityCheck> = Set(SecurityCheck.allCases)
 
-    /// When `false`, the built-in indicator lists are ignored and only the custom entries are used.
-    /// Intended for tests. Default: `true`.
+    /// When `false`, the built-in indicator lists and heuristics (including the parent-process check and
+    /// the system-function verification) are skipped and only the custom entries are used. Intended for
+    /// tests. Default: `true`.
     public var includesBuiltInIndicators = true
 
     /// Run the checks on the Simulator, on macOS and under Mac Catalyst too. Their results are not
@@ -81,6 +82,15 @@ public struct SecurityConfiguration: Sendable {
 
     /// Call `fork()`, which the stock sandbox forbids. A successful child exits immediately. Default: `true`.
     public var performsForkProbe = true
+
+    /// Extra Objective-C class names that only a jailbreak-detection bypass tool or tweak registers. A
+    /// tweak can hide its files and its library, but its classes stay registered with the runtime.
+    /// Reported as ``SecurityThreat/Kind/jailbreakBypassTool``.
+    public var additionalSuspiciousClasses: [String] = []
+
+    /// Probe the loopback interface for an SSH server (port 22) or checkra1n's shell (port 44). Nothing
+    /// listens there on a stock device. Never leaves the device. Default: `true`.
+    public var probesRemoteShellPorts = true
 
     // MARK: Hooking
 
@@ -118,6 +128,12 @@ public struct SecurityConfiguration: Sendable {
     /// `Scripts/text-digest.swift`). A running binary whose digest is not listed was modified. Computing
     /// the digest reads the whole code section, so use it for release builds only. Default: empty (off).
     public var expectedTextSegmentDigests: Set<String> = []
+
+    /// Expected `__TEXT,__text` digests of embedded dynamic libraries, keyed by the library's trailing
+    /// path components (for example `"Auth.framework/Auth"`). Libraries inside the app bundle are matched
+    /// first. Compute the values with `Scripts/text-digest.swift` or
+    /// ``SecurityEngine/textSegmentDigest(ofImageNamed:)``. Default: empty (off).
+    public var expectedImageTextDigests: [String: Set<String>] = [:]
 
     /// How the app is distributed. Default: ``Distribution/any``.
     public var expectedDistribution: Distribution = .any

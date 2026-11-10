@@ -7,6 +7,8 @@
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
 
+#import <objc/runtime.h>
+
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -59,6 +61,10 @@ static NSArray<NSString *> *ISCBuiltInArtifactPaths(void) {
             ISC_OBF_NSSTRING("/Library/MobileSubstrate/MobileSubstrate.dylib"),
             ISC_OBF_NSSTRING("/Library/MobileSubstrate/DynamicLibraries"),
             ISC_OBF_NSSTRING("/Library/Frameworks/CydiaSubstrate.framework"),
+            ISC_OBF_NSSTRING("/Library/PreferenceBundles/Cephei.bundle"),
+            ISC_OBF_NSSTRING("/Library/PreferenceBundles/SubstitutePrefs.bundle"),
+            ISC_OBF_NSSTRING("/Library/PreferenceBundles/libhbangprefs.bundle"),
+            ISC_OBF_NSSTRING("/usr/lib/substrate"),
             ISC_OBF_NSSTRING("/usr/lib/libsubstrate.dylib"),
             ISC_OBF_NSSTRING("/usr/lib/libsubstitute.dylib"),
             ISC_OBF_NSSTRING("/usr/lib/substitute-inserter.dylib"),
@@ -90,6 +96,8 @@ static NSArray<NSString *> *ISCBuiltInArtifactPaths(void) {
             ISC_OBF_NSSTRING("/var/cache/apt"),
             ISC_OBF_NSSTRING("/var/lib/apt"),
             ISC_OBF_NSSTRING("/var/lib/cydia"),
+            ISC_OBF_NSSTRING("/var/lib/dpkg"),
+            ISC_OBF_NSSTRING("/var/log/apt"),
             ISC_OBF_NSSTRING("/var/log/syslog"),
             ISC_OBF_NSSTRING("/var/tmp/cydia.log"),
             ISC_OBF_NSSTRING("/System/Library/LaunchDaemons/com.ikey.bbot.plist"),
@@ -139,6 +147,10 @@ static NSArray<NSString *> *ISCBuiltInInjectionLibraries(void) {
             ISC_OBF_NSSTRING("libsandy"),
             ISC_OBF_NSSTRING("rocketbootstrap"),
             ISC_OBF_NSSTRING("pspawn_payload"),
+            ISC_OBF_NSSTRING("PreferenceLoader"),
+            ISC_OBF_NSSTRING("WeeLoader"),
+            ISC_OBF_NSSTRING("Cephei"),
+            ISC_OBF_NSSTRING("AppSyncUnified"),
             // Jailbreak-detection bypass tweaks
             ISC_OBF_NSSTRING("ABypass"),
             ISC_OBF_NSSTRING("FlyJB"),
@@ -147,6 +159,48 @@ static NSArray<NSString *> *ISCBuiltInInjectionLibraries(void) {
     });
     return names;
 }
+
+/// Files that only a jailbreak-detection bypass tool installs. Someone running one is actively hiding
+/// the device's state from apps, which is a stronger signal than the jailbreak itself.
+static NSArray<NSString *> *ISCBuiltInBypassToolPaths(void) {
+    static NSArray<NSString *> *paths;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        paths = @[
+            // A-Bypass
+            ISC_OBF_NSSTRING("/usr/lib/ABDYLD.dylib"),
+            ISC_OBF_NSSTRING("/usr/lib/ABSubLoader.dylib"),
+            ISC_OBF_NSSTRING("/Library/BawAppie/ABypass"),
+            ISC_OBF_NSSTRING("/Library/PreferenceBundles/ABypassPrefs.bundle"),
+            ISC_OBF_NSSTRING("/var/mobile/Library/Preferences/ABPattern"),
+            // FlyJB
+            ISC_OBF_NSSTRING("/Applications/FlyJB.app"),
+            ISC_OBF_NSSTRING("/Library/PreferenceBundles/FlyJBPrefs.bundle"),
+            // Shadow
+            ISC_OBF_NSSTRING("/Library/PreferenceBundles/ShadowPreferences.bundle"),
+            ISC_OBF_NSSTRING("/var/mobile/Library/Preferences/me.jjolano.shadow.plist"),
+            // Liberty
+            ISC_OBF_NSSTRING("/Library/PreferenceBundles/LibertyPref.bundle"),
+        ];
+    });
+    return paths;
+}
+
+/// Objective-C classes that only a bypass tool registers. A tweak can hide its library from the
+/// loaded-image list and its files from `access(2)`, but not its classes from the runtime.
+static NSArray<NSString *> *ISCBuiltInBypassToolClasses(void) {
+    static NSArray<NSString *> *names;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        names = @[
+            ISC_OBF_NSSTRING("ShadowRuleset"),
+        ];
+    });
+    return names;
+}
+
+/// Loopback ports nothing listens on in a stock iOS install: OpenSSH (22) and checkra1n's shell (44).
+static const uint16_t ISCRemoteShellPorts[] = {22, 44};
 
 // MARK: - Probes
 
@@ -294,7 +348,48 @@ static BOOL ISCForkSucceeds(void) {
         [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakForkAllowed detail:nil]];
     }
 
+    // 7. A remote shell listening on loopback.
+    if (options.includesBuiltInIndicators && options.probesRemoteShellPorts) {
+        NSMutableArray<NSString *> *open = [NSMutableArray array];
+        for (size_t index = 0; index < sizeof(ISCRemoteShellPorts) / sizeof(ISCRemoteShellPorts[0]); index++) {
+            if (ISCLoopbackPortIsOpen(ISCRemoteShellPorts[index], ISCPortProbeTimeoutMilliseconds)) {
+                [open addObject:[NSString stringWithFormat:@"%u", (unsigned)ISCRemoteShellPorts[index]]];
+            }
+        }
+        if (open.count > 0) {
+            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakRemoteShellPort
+                                                          detail:[open componentsJoinedByString:@", "]]];
+        }
+    }
+
+    // 8. A jailbreak-detection bypass tool, by its classes and its files.
+    NSMutableArray<NSString *> *classNames = [NSMutableArray array];
+    NSMutableArray<NSString *> *bypassPaths = [NSMutableArray array];
+    if (options.includesBuiltInIndicators) {
+        [classNames addObjectsFromArray:ISCBuiltInBypassToolClasses()];
+        [bypassPaths addObjectsFromArray:ISCBuiltInBypassToolPaths()];
+    }
+    [classNames addObjectsFromArray:options.additionalSuspiciousClasses];
+    NSMutableArray<NSString *> *bypass = [NSMutableArray arrayWithArray:[self registeredClassesAmong:classNames]];
+    [bypass addObjectsFromArray:[self existingPathsAmong:bypassPaths]];
+    if (bypass.count > 0) {
+        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakBypassTool
+                                                      detail:ISCSummarizeValues(bypass, ISCDetailLimit)]];
+    }
+
     return findings;
+}
+
++ (NSArray<NSString *> *)registeredClassesAmong:(NSArray<NSString *> *)classNames {
+    NSMutableArray<NSString *> *registered = [NSMutableArray array];
+    for (NSString *name in classNames) {
+        // objc_lookUpClass, unlike objc_getClass, never calls a class handler that could load code.
+        const char *cName = ISCSafeCPath(name);
+        if (cName != NULL && objc_lookUpClass(cName) != Nil) {
+            [registered addObject:name];
+        }
+    }
+    return registered;
 }
 
 + (NSArray<NSString *> *)existingPathsAmong:(NSArray<NSString *> *)paths {

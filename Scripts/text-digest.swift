@@ -3,10 +3,11 @@
 //  text-digest.swift
 //
 //  Prints the lowercase hex SHA-256 of a Mach-O binary's `__TEXT,__text` section: the value to put in
-//  `SecurityConfiguration.expectedTextSegmentDigests`.
+//  `SecurityConfiguration.expectedTextSegmentDigests` (the app) or `expectedImageTextDigests` (a framework).
 //
 //  Usage:
 //      swift Scripts/text-digest.swift path/to/App.app/App
+//      swift Scripts/text-digest.swift path/to/App.app/Frameworks/Auth.framework/Auth
 //
 //  Run it on the *release* binary you ship. For an App Store build, Apple re-signs and FairPlay-encrypts
 //  the binary, so compute the digest from the decrypted code the device sees (for example, print

@@ -129,6 +129,19 @@ public final class SecurityEngine: @unchecked Sendable {
         }
     }
 
+    /// The SHA-256 of a loaded library's `__TEXT,__text` section: the value for
+    /// ``SecurityConfiguration/expectedImageTextDigests``. Print it from a TestFlight build.
+    ///
+    /// - Parameter name: The library's trailing path components, for example `"Auth.framework/Auth"`.
+    /// - Returns: Lowercase hex, or `nil` when no such library is loaded or its code cannot be read.
+    public func textSegmentDigest(ofImageNamed name: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: ISCIntegrityChecker.textSegmentDigest(ofImageNamed: name))
+            }
+        }
+    }
+
     // MARK: - Countermeasures
 
     /// Asks the kernel to refuse any future debugger attachment (`PT_DENY_ATTACH`).

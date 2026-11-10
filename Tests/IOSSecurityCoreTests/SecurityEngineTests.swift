@@ -23,6 +23,7 @@ final class SecurityEngineTests: XCTestCase {
         configuration.performsSandboxWriteProbe = false
         configuration.performsForkProbe = false
         configuration.probesInstrumentationPorts = false
+        configuration.probesRemoteShellPorts = false
         configuration.reportsUnknownLibraries = false
         return configuration
     }
@@ -82,6 +83,33 @@ final class SecurityEngineTests: XCTestCase {
         let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.hooking])
         XCTAssertEqual(report.performedChecks, [.hooking])
         XCTAssertFalse(report.contains(.jailbreakArtifact), "jailbreak checks were not requested")
+    }
+
+    func testTheNetworkFamilyIsReachableFromSwift() async {
+        let report = await SecurityEngine(configuration: isolatedConfiguration()).evaluate(checks: [.network])
+        XCTAssertEqual(report.performedChecks, [.network])
+        XCTAssertTrue(report.threats.allSatisfy { $0.category == .network && $0.kind == .networkProxy })
+        XCTAssertFalse(report.isCompromised, "a proxy alone never marks the device compromised")
+    }
+
+    func testCustomSuspiciousClassesAreReportedAsABypassTool() async {
+        var configuration = isolatedConfiguration()
+        configuration.additionalSuspiciousClasses = ["NSObject"]
+        let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.jailbreak])
+        XCTAssertTrue(report.contains(.jailbreakBypassTool))
+        XCTAssertEqual(report.threats(in: .jailbreak).first?.identifier, "jailbreak.bypass_tool")
+    }
+
+    func testImageDigestsCanBeComputedAndEnforced() async {
+        let engine = SecurityEngine(configuration: isolatedConfiguration())
+        let missing = await engine.textSegmentDigest(ofImageNamed: "NoSuchLibrary.framework/NoSuchLibrary")
+        XCTAssertNil(missing)
+
+        var configuration = isolatedConfiguration()
+        configuration.expectedImageTextDigests = ["NoSuchLibrary.framework/NoSuchLibrary": ["00"]]
+        let report = await SecurityEngine(configuration: configuration).evaluate(checks: [.integrity])
+        XCTAssertTrue(report.contains(.integrityImageUnavailable))
+        XCTAssertFalse(report.isCompromised)
     }
 
     func testIntegrityExpectationsAreEnforced() async {

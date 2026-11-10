@@ -15,6 +15,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// no platform gating. Every test starts from these so results do not depend on the machine running them.
 ISCScanOptions *ISCTestOptions(void);
 
+/// Opens a TCP listener on loopback `port`. Returns the descriptor, or -1 when the port cannot be
+/// bound (in use, or privileged on this machine). Close it with `close(2)`.
+int ISCOpenLoopbackListener(uint16_t port);
+
 /// Whether `findings` contains a finding with `code`.
 BOOL ISCContainsCode(NSArray<ISCFinding *> *findings, ISCFindingCode code);
 

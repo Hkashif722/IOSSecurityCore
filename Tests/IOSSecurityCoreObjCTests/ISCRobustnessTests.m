@@ -107,6 +107,35 @@ static NSArray<NSString *> *ISCHostileStrings(void) {
     }
 }
 
+- (void)testHostileSuspiciousClassesNeverRaiseOrCrash {
+    ISCScanOptions *options = ISCTestOptions();
+    options.additionalSuspiciousClasses = ISCHostileStrings();
+    XCTAssertNoThrow([ISCJailbreakDetector scanWithOptions:options]);
+    XCTAssertNoThrow([ISCJailbreakDetector registeredClassesAmong:ISCHostileStrings()]);
+}
+
+- (void)testHostileImageDigestExpectationsNeverRaiseOrCrash {
+    NSMutableDictionary *expectations = [NSMutableDictionary dictionary];
+    for (NSString *hostile in ISCHostileStrings()) {
+        expectations[hostile] = ISCHostileStrings();
+    }
+    // What a careless Objective-C caller or a decoded plist can put in a typed dictionary.
+    NSDictionary *malformed = @{
+        @1: @[@"00"],
+        NSNull.null: @[],
+        @"NotAnArray.framework/NotAnArray": @"00",
+        @"NumbersInside.framework/NumbersInside": @[@1, NSNull.null],
+    };
+    [expectations addEntriesFromDictionary:malformed];
+
+    ISCScanOptions *options = ISCTestOptions();
+    options.expectedImageTextDigests = expectations;
+    XCTAssertNoThrow([ISCIntegrityChecker scanWithOptions:options]);
+    for (NSString *hostile in ISCHostileStrings()) {
+        XCTAssertNoThrow([ISCIntegrityChecker textSegmentDigestOfImageNamed:hostile]);
+    }
+}
+
 - (void)testBlankExpectationsMeanNotConfigured {
     ISCScanOptions *options = ISCTestOptions();
     options.expectedBundleIdentifier = @"";
@@ -126,6 +155,8 @@ static NSArray<NSString *> *ISCHostileStrings(void) {
     options.expectedBundleIdentifier = ISCHostileStrings().lastObject;
     options.expectedTeamIdentifier = ISCHostileStrings()[11];
     options.expectedTextSegmentDigests = ISCHostileStrings();
+    options.additionalSuspiciousClasses = ISCHostileStrings();
+    options.expectedImageTextDigests = @{ISCHostileStrings()[11]: ISCHostileStrings(), @"": @[@""]};
     options.protectedMethods = @[[[ISCProtectedMethod alloc] initWithTargetClassName:@""
                                                                         selectorName:@""
                                                                        isClassMethod:NO

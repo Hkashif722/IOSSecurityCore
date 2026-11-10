@@ -60,6 +60,23 @@ BOOL ISCImageForAddress(const void *address,
                         NSString *_Nullable *_Nullable outPath,
                         const void *_Nullable *_Nullable outBase);
 
+/// `YES` when the Mach-O image whose header is at `base` lives in the dyld shared cache, which holds
+/// every library the OS ships. Tweaks, instrumentation agents and the app's own code never do.
+BOOL ISCImageIsInSharedCache(const void *_Nullable base);
+
+/// `YES` when `path` equals `suffix` or ends in `/` followed by `suffix`: whole path components only,
+/// so `Auth.framework/Auth` does not match `EvilAuth.framework/Auth`. An empty suffix never matches.
+BOOL ISCPathHasComponentSuffix(NSString *path, NSString *suffix);
+
+// MARK: - Network
+
+/// Longest wait for a loopback probe to answer. A closed port refuses instantly; this bounds the
+/// pathological case of a firewall that silently drops loopback traffic.
+static const int ISCPortProbeTimeoutMilliseconds = 150;
+
+/// Whether something is listening on the loopback interface at `port`. Never leaves the device.
+BOOL ISCLoopbackPortIsOpen(uint16_t port, int timeoutMilliseconds);
+
 // MARK: - Strings
 
 /// The members of `strings` that contain any of `needles`, ignoring case.

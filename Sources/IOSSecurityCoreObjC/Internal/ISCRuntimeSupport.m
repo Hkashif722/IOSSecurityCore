@@ -5,12 +5,18 @@
 
 #import "ISCRuntimeSupport.h"
 
+#include <arpa/inet.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#include <netinet/in.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 // MARK: - File system
@@ -143,6 +149,73 @@ BOOL ISCImageForAddress(const void *address, NSString **outPath, const void **ou
         *outBase = info.dli_fbase;
     }
     return YES;
+}
+
+BOOL ISCImageIsInSharedCache(const void *base) {
+    if (base == NULL) {
+        return NO;
+    }
+    // `base` comes from dladdr, so it is the mapped header of a loaded image and safe to read.
+    const struct mach_header *header = base;
+    if (header->magic != MH_MAGIC_64 && header->magic != MH_MAGIC) {
+        return NO;
+    }
+    return (header->flags & MH_DYLIB_IN_CACHE) != 0;
+}
+
+BOOL ISCPathHasComponentSuffix(NSString *path, NSString *suffix) {
+    if (suffix.length == 0 || path.length < suffix.length) {
+        return NO;
+    }
+    if ([path isEqualToString:suffix]) {
+        return YES;
+    }
+    return [path hasSuffix:suffix] && [path characterAtIndex:path.length - suffix.length - 1] == '/';
+}
+
+// MARK: - Network
+
+BOOL ISCLoopbackPortIsOpen(uint16_t port, int timeoutMilliseconds) {
+    int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+    if (descriptor < 0) {
+        return NO;
+    }
+
+    int flags = fcntl(descriptor, F_GETFL, 0);
+    if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(descriptor);
+        return NO;
+    }
+    int noSigPipe = 1;
+    setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_len = sizeof(address);
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    BOOL isOpen = NO;
+    if (connect(descriptor, (const struct sockaddr *)&address, sizeof(address)) == 0) {
+        isOpen = YES;
+    } else if (errno == EINPROGRESS) {
+        struct pollfd waiting = {.fd = descriptor, .events = POLLOUT, .revents = 0};
+        int ready;
+        do {
+            ready = poll(&waiting, 1, timeoutMilliseconds);
+        } while (ready < 0 && errno == EINTR);
+
+        if (ready > 0) {
+            int socketError = 0;
+            socklen_t length = sizeof(socketError);
+            if (getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &socketError, &length) == 0 && socketError == 0) {
+                isOpen = YES;
+            }
+        }
+    }
+    close(descriptor);
+    return isOpen;
 }
 
 // MARK: - Strings

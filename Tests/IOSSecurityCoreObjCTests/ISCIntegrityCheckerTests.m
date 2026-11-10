@@ -6,6 +6,16 @@
 #import <XCTest/XCTest.h>
 #import "ISCTestSupport.h"
 
+#include <dlfcn.h>
+
+/// The file name of the image these tests are linked into (the test bundle's executable).
+static NSString *ISCTestImageName(void) {
+    Dl_info info;
+    memset(&info, 0, sizeof(info));
+    dladdr((const void *)(uintptr_t)ISCTestImageName, &info);
+    return info.dli_fname != NULL ? @(info.dli_fname).lastPathComponent : @"";
+}
+
 @interface ISCIntegrityCheckerTests : XCTestCase
 @end
 
@@ -219,6 +229,61 @@
 
     options.expectedTextSegmentDigests = @[@"00", actual.uppercaseString];
     XCTAssertEqual([ISCIntegrityChecker scanWithOptions:options].count, 0u, @"any listed digest is accepted, case-insensitively");
+}
+
+// MARK: - Embedded library digests
+
+- (void)testImageDigestIsLowercaseHexSHA256AndStable {
+    NSString *name = ISCTestImageName();
+    XCTAssertGreaterThan(name.length, 0u);
+    NSString *first = [ISCIntegrityChecker textSegmentDigestOfImageNamed:name];
+    XCTAssertNotNil(first, @"%@", name);
+    XCTAssertEqual(first.length, 64u);
+    NSCharacterSet *notHex = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
+    XCTAssertEqual([first rangeOfCharacterFromSet:notHex].location, (NSUInteger)NSNotFound, @"%@", first);
+    XCTAssertEqualObjects([ISCIntegrityChecker textSegmentDigestOfImageNamed:name], first);
+}
+
+- (void)testImagesAreMatchedByWholePathComponentsOnly {
+    NSString *name = ISCTestImageName();
+    XCTAssertNil([ISCIntegrityChecker textSegmentDigestOfImageNamed:[name substringFromIndex:1]],
+                 @"a suffix of a file name is not the file");
+    XCTAssertNil([ISCIntegrityChecker textSegmentDigestOfImageNamed:@"NoSuchLibrary.framework/NoSuchLibrary"]);
+    XCTAssertNil([ISCIntegrityChecker textSegmentDigestOfImageNamed:@""]);
+}
+
+- (void)testUnexpectedImageDigestIsCriticalAndMatchingDigestIsClean {
+    NSString *name = ISCTestImageName();
+    NSString *actual = [ISCIntegrityChecker textSegmentDigestOfImageNamed:name];
+    XCTAssertNotNil(actual);
+
+    ISCScanOptions *options = ISCTestOptions();
+    options.expectedImageTextDigests = @{name: @[[@"" stringByPaddingToLength:64 withString:@"0" startingAtIndex:0]]};
+    ISCFinding *finding = ISCFindingWithCode([ISCIntegrityChecker scanWithOptions:options],
+                                             ISCFindingCodeIntegrityImageModified);
+    XCTAssertNotNil(finding);
+    XCTAssertEqual(finding.severity, ISCSeverityCritical);
+    XCTAssertTrue([finding.detail containsString:name] && [finding.detail containsString:actual], @"%@", finding.detail);
+
+    options.expectedImageTextDigests = @{name: @[@"00", actual.uppercaseString]};
+    XCTAssertEqual([ISCIntegrityChecker scanWithOptions:options].count, 0u, @"any listed digest is accepted, case-insensitively");
+}
+
+- (void)testAMissingImageIsUnavailableNotModified {
+    ISCScanOptions *options = ISCTestOptions();
+    options.expectedImageTextDigests = @{@"NoSuchLibrary.framework/NoSuchLibrary": @[@"00"]};
+    NSArray<ISCFinding *> *findings = [ISCIntegrityChecker scanWithOptions:options];
+
+    ISCFinding *finding = ISCFindingWithCode(findings, ISCFindingCodeIntegrityImageUnavailable);
+    XCTAssertNotNil(finding);
+    XCTAssertLessThan(finding.severity, ISCSeverityHigh, @"not finding a library is not proof of tampering");
+    XCTAssertFalse(ISCContainsCode(findings, ISCFindingCodeIntegrityImageModified));
+}
+
+- (void)testAnEmptyDigestListMeansNotConfigured {
+    ISCScanOptions *options = ISCTestOptions();
+    options.expectedImageTextDigests = @{ISCTestImageName(): @[], @"NoSuchLibrary.framework/NoSuchLibrary": @[]};
+    XCTAssertEqual([ISCIntegrityChecker scanWithOptions:options].count, 0u);
 }
 
 - (void)testAppStoreExpectationReportsNothingForAnArtifactThatLooksLikeAppStore {

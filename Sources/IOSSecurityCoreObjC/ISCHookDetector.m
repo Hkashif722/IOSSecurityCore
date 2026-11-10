@@ -7,28 +7,69 @@
 #import "ISCDebuggerDetector.h"
 #import "ISCIntegrityChecker.h"
 #import "ISCJailbreakDetector.h"
+#import "ISCNetworkDetector.h"
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
 #import "ISCSecurityScanner.h"
+#import "ISCTrampoline.h"
 
 #import <objc/runtime.h>
+#import <TargetConditionals.h>
 
-#include <arpa/inet.h>
-#include <errno.h>
+#include <dlfcn.h>
 #include <fcntl.h>
+#include <mach-o/dyld.h>
 #include <mach/mach.h>
-#include <netinet/in.h>
-#include <poll.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 /// Frida's default listening port.
 static const uint16_t ISCInstrumentationPort = 27042;
 
-/// Longest wait for the loopback probe to answer. A closed port refuses instantly; this bounds the
-/// pathological case of a firewall that silently drops loopback traffic.
-static const int ISCPortProbeTimeoutMilliseconds = 150;
+// MARK: - System functions the detectors depend on
+//
+// Bypass tweaks (Shadow, A-Bypass, FlyJB, ...) do not patch this package; they hook the system calls
+// its checks make, so files, libraries and debuggers simply "are not there". Before those answers are
+// trusted, each function is checked twice:
+// - Rebinding (fishhook, dyld interposing): the address this image calls must lie in the OS.
+// - Inline patching (Substrate, ElleKit, Dobby, Frida's Interceptor): its first instructions must not
+//   branch out of the OS.
+//
+// The address is re-read on every scan: caching it would freeze the value a later hook replaces.
+
+#define ISC_SYSTEM_FUNCTIONS(X) \
+    X(access)                   \
+    X(open)                     \
+    X(readlink)                 \
+    X(getenv)                   \
+    X(sysctl)                   \
+    X(getppid)                  \
+    X(dladdr)                   \
+    X(dlsym)                    \
+    X(_dyld_image_count)        \
+    X(_dyld_get_image_name)     \
+    X(_dyld_get_image_header)   \
+    X(task_threads)             \
+    X(thread_get_state)         \
+    X(connect)                  \
+    X(method_getImplementation) \
+    X(objc_lookUpClass)
+
+#define ISC_SYSTEM_FUNCTION_ADDRESS(function) (const void *)(function),
+#define ISC_SYSTEM_FUNCTION_NAME(function) ISC_OBF_NSSTRING(#function),
+
+/// Names of `ISC_SYSTEM_FUNCTIONS`, in the same order. Only needed when something is reported.
+static NSArray<NSString *> *ISCSystemFunctionNames(void) {
+    static NSArray<NSString *> *names;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        names = @[ISC_SYSTEM_FUNCTIONS(ISC_SYSTEM_FUNCTION_NAME)];
+    });
+    return names;
+}
 
 // MARK: - Built-in indicators
 
@@ -114,50 +155,6 @@ static NSArray<NSString *> *ISCTrustedSystemPrefixes(void) {
 
 // MARK: - Probes
 
-/// Whether something is listening on the loopback interface at `port`. Never leaves the device.
-static BOOL ISCLoopbackPortIsOpen(uint16_t port, int timeoutMilliseconds) {
-    int descriptor = socket(AF_INET, SOCK_STREAM, 0);
-    if (descriptor < 0) {
-        return NO;
-    }
-
-    int flags = fcntl(descriptor, F_GETFL, 0);
-    if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) {
-        close(descriptor);
-        return NO;
-    }
-    int noSigPipe = 1;
-    setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
-
-    struct sockaddr_in address;
-    memset(&address, 0, sizeof(address));
-    address.sin_len = sizeof(address);
-    address.sin_family = AF_INET;
-    address.sin_port = htons(port);
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    BOOL isOpen = NO;
-    if (connect(descriptor, (const struct sockaddr *)&address, sizeof(address)) == 0) {
-        isOpen = YES;
-    } else if (errno == EINPROGRESS) {
-        struct pollfd waiting = {.fd = descriptor, .events = POLLOUT, .revents = 0};
-        int ready;
-        do {
-            ready = poll(&waiting, 1, timeoutMilliseconds);
-        } while (ready < 0 && errno == EINTR);
-
-        if (ready > 0) {
-            int socketError = 0;
-            socklen_t length = sizeof(socketError);
-            if (getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &socketError, &length) == 0 && socketError == 0) {
-                isOpen = YES;
-            }
-        }
-    }
-    close(descriptor);
-    return isOpen;
-}
-
 /// The names of this process's threads, read with `thread_info` (not `pthread_from_mach_thread_np`,
 /// whose result can dangle when a thread exits concurrently).
 static NSArray<NSString *> *ISCCopyThreadNames(void) {
@@ -217,12 +214,8 @@ static NSArray<NSString *> *ISCUnexpectedBundleImages(NSArray<NSString *> *image
         }
         BOOL isAllowed = NO;
         for (NSString *name in allowedNames) {
-            if (name.length == 0) {
-                continue;
-            }
-            // Match whole path components: "Auth.framework/Auth" must not match "EvilAuth.framework/Auth".
-            if ([image isEqualToString:name] ||
-                ([image hasSuffix:name] && [image characterAtIndex:image.length - name.length - 1] == '/')) {
+            // Whole path components only: "Auth.framework/Auth" must not match "EvilAuth.framework/Auth".
+            if (ISCPathHasComponentSuffix(image, name)) {
                 isAllowed = YES;
                 break;
             }
@@ -232,6 +225,98 @@ static NSArray<NSString *> *ISCUnexpectedBundleImages(NSArray<NSString *> *image
         }
     }
     return unexpected;
+}
+
+// MARK: - Code locations
+
+/// Where non-cached OS code lives: the developer disk image and cryptexes. Deliberately not `/usr/lib/`
+/// on a device: every genuine library there is in the shared cache, and rootful tweak loaders install
+/// into it. The Simulator is different: it loads some of `/usr/lib/system/` from outside its cache.
+static NSArray<NSString *> *ISCTrustedCodePrefixes(void) {
+    return @[
+        @"/System/",
+        @"/Developer/",
+        @"/Library/Apple/",
+        @"/private/preboot/Cryptexes/",
+#if TARGET_OS_SIMULATOR
+        @"/usr/lib/",
+#endif
+    ];
+}
+
+/// Whether `address` lies in code a system function may legitimately reach: the OS (shared cache,
+/// dyld, developer and cryptex images), the app bundle, or a prefix the host trusts. `outImagePath`
+/// receives the containing image, or nil for memory no image owns (a hook's trampoline page).
+static BOOL ISCAddressIsTrustedCode(const void *address, NSArray<NSString *> *extraTrustedPrefixes,
+                                    NSString **outImagePath) {
+    *outImagePath = nil;
+    NSString *path = nil;
+    const void *base = NULL;
+    if (!ISCImageForAddress(address, &path, &base)) {
+        return NO;
+    }
+    *outImagePath = path;
+    if (ISCImageIsInSharedCache(base) || [path isEqualToString:@"/usr/lib/dyld"]) {
+        return YES;
+    }
+    NSMutableArray<NSString *> *trusted = [NSMutableArray arrayWithArray:ISCTrustedCodePrefixes()];
+    [trusted addObjectsFromArray:ISCAppBundleRoots()];
+    [trusted addObjectsFromArray:extraTrustedPrefixes];
+    return ISCPathMatchesAnyPrefix(path, trusted);
+}
+
+/// `YES` when `function` starts with a branch into untrusted code. `outDestination` receives the
+/// destination's image path, or nil for anonymous memory.
+static BOOL ISCFunctionIsInlineHooked(const void *function, NSArray<NSString *> *extraTrustedPrefixes,
+                                      NSString **outDestination) {
+    *outDestination = nil;
+    const void *target = NULL;
+    if (!ISCDecodeTrampoline(function, &target)) {
+        return NO;
+    }
+    NSString *path = nil;
+    if (ISCAddressIsTrustedCode(target, extraTrustedPrefixes, &path)) {
+        return NO;
+    }
+    *outDestination = path;
+    return YES;
+}
+
+static NSString *ISCDescribeRedirect(NSString *name, NSString *destination) {
+    return [NSString stringWithFormat:@"%@ -> %@", name, destination ?: ISC_OBF_NSSTRING("unknown image")];
+}
+
+/// Findings for the system functions that were rebound or inline-patched.
+static NSArray<ISCFinding *> *ISCSystemFunctionFindings(NSArray<NSString *> *extraTrustedPrefixes) {
+    const void *addresses[] = {ISC_SYSTEM_FUNCTIONS(ISC_SYSTEM_FUNCTION_ADDRESS)};
+    size_t count = sizeof(addresses) / sizeof(addresses[0]);
+
+    NSMutableArray<NSString *> *rebound = [NSMutableArray array];
+    NSMutableArray<NSString *> *patched = [NSMutableArray array];
+    for (size_t index = 0; index < count; index++) {
+        const void *bound = (const void *)(uintptr_t)ISC_STRIP_CODE_POINTER(addresses[index]);
+        if (bound == NULL) {
+            continue;
+        }
+        NSString *path = nil;
+        if (!ISCAddressIsTrustedCode(bound, extraTrustedPrefixes, &path)) {
+            // Bound elsewhere: the code at `bound` is the hook itself, so there is no point decoding it.
+            [rebound addObject:ISCDescribeRedirect(ISCSystemFunctionNames()[index], path)];
+        } else if (ISCFunctionIsInlineHooked(bound, extraTrustedPrefixes, &path)) {
+            [patched addObject:ISCDescribeRedirect(ISCSystemFunctionNames()[index], path)];
+        }
+    }
+
+    NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
+    if (rebound.count > 0) {
+        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeHookReboundSymbol
+                                                      detail:ISCSummarizeValues(rebound, ISCDetailLimit)]];
+    }
+    if (patched.count > 0) {
+        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeHookInlinePatchedFunction
+                                                      detail:ISCSummarizeValues(patched, ISCDetailLimit)]];
+    }
+    return findings;
 }
 
 // MARK: - Objective-C runtime checks
@@ -270,9 +355,11 @@ static NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
     };
     const struct Target targets[] = {
         {ISCJailbreakDetector.class, @selector(scanWithOptions:), YES},
+        {ISCDebuggerDetector.class, @selector(scanWithOptions:), YES},
         {ISCDebuggerDetector.class, @selector(isDebuggerAttached), YES},
         {ISCHookDetector.class, @selector(scanWithOptions:), YES},
         {ISCIntegrityChecker.class, @selector(scanWithOptions:), YES},
+        {ISCNetworkDetector.class, @selector(scanWithOptions:), YES},
         {ISCSecurityScanner.class, @selector(scan), NO},
         {ISCFinding.class, @selector(initWithCode:detail:), NO},
     };
@@ -307,12 +394,22 @@ static NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
     return ISCCopyLoadedImagePaths();
 }
 
++ (BOOL)isFunctionInlineHooked:(const void *)function {
+    NSString *destination = nil;
+    return ISCFunctionIsInlineHooked(function, @[], &destination);
+}
+
 + (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
     NSArray<NSString *> *images = ISCCopyLoadedImagePaths();
 
     // 1. Has someone hooked the detectors themselves?
     [findings addObjectsFromArray:ISCSelfIntegrityFindings()];
+
+    // 1b. ...or the system functions their answers come from?
+    if (options.includesBuiltInIndicators) {
+        [findings addObjectsFromArray:ISCSystemFunctionFindings(options.allowedImagePathPrefixes)];
+    }
 
     // 2. Instrumentation libraries that are already loaded.
     NSMutableArray<NSString *> *libraryNeedles = [NSMutableArray array];

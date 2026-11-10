@@ -17,6 +17,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// The checks, in order:
 /// 1. **Self-integrity**: this package's own detector methods must still be implemented inside the
 ///    image that contains them. A swizzled detector is the first thing an attacker does.
+///    **System functions**: the libc, dyld and Objective-C runtime functions the detectors call
+///    (`access`, `open`, `sysctl`, `getenv`, `_dyld_get_image_name`, ...) must be bound to the OS
+///    (not rebound by fishhook or dyld interposing) and must not start with a branch out of it (an
+///    inline hook by Substrate, ElleKit, Dobby or Frida). Bypass tweaks work by hooking exactly these.
 /// 2. **Instrumentation libraries**: Frida, Cycript, SSL Kill Switch and similar in the loaded-image list.
 /// 3. **Instrumentation artifacts**: `frida-server` on disk, and a listener on its default loopback port.
 /// 4. **Instrumentation threads**: the worker threads Frida's agent starts.
@@ -37,6 +41,15 @@ ISC_RN_HOOK_DETECTOR
 
 /// The path of every image dyld has loaded into this process, in load order.
 + (NSArray<NSString *> *)loadedImagePaths;
+
+/// `YES` when the code at `function` starts with a branch to somewhere that is neither the OS nor the
+/// app bundle: the trampoline an inline hook (Substrate's `MSHookFunction`, ElleKit, Dobby, Frida's
+/// Interceptor) writes over a function's first instructions.
+///
+/// Use it for your own sensitive C functions: `[ISCHookDetector isFunctionInlineHooked:(const void *)verifyLicense]`.
+/// Branches that stay inside the OS or the app (compiler thunks) are not reported. A garbage or
+/// unmapped address returns `NO`, never crashes. Always `NO` on architectures other than arm64.
++ (BOOL)isFunctionInlineHooked:(const void *)function;
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

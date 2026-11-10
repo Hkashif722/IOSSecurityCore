@@ -56,8 +56,9 @@ ISC_RN_SCAN_OPTIONS
 /// The detector families to run. Default: `ISCChecksAll`.
 @property (nonatomic) ISCChecks checks;
 
-/// When `NO`, the built-in lists (jailbreak paths, hooking-framework names, ...) are ignored and only
-/// the custom entries below are examined. Intended for tests. Default: `YES`.
+/// When `NO`, the built-in lists and heuristics (jailbreak paths, hooking-framework names, the
+/// parent-process check, the system-function verification, ...) are skipped and only the custom
+/// entries below are examined. Intended for tests. Default: `YES`.
 @property (nonatomic) BOOL includesBuiltInIndicators;
 
 /// When `YES`, checks also run on the Simulator, on macOS and under Mac Catalyst, where results are
@@ -77,6 +78,15 @@ ISC_RN_SCAN_OPTIONS
 /// Call `fork()`. It fails inside a stock iOS sandbox and succeeds on devices with a weakened one; a
 /// successful child exits immediately and is reaped. Default: `YES`.
 @property (nonatomic) BOOL performsForkProbe;
+
+/// Extra Objective-C class names that only a jailbreak-detection bypass tool or tweak registers. A
+/// tweak can hide its library from the loaded-image list and its files from `access(2)`, but its
+/// classes stay registered with the runtime. Reported as `ISCFindingCodeJailbreakBypassTool`.
+@property (nonatomic, copy) NSArray<NSString *> *additionalSuspiciousClasses;
+
+/// Probe the loopback interface for an SSH server (port 22) or checkra1n's shell (port 44). Nothing
+/// listens there on a stock device. Never leaves the device. Default: `YES`.
+@property (nonatomic) BOOL probesRemoteShellPorts;
 
 // MARK: Hooking
 
@@ -114,6 +124,13 @@ ISC_RN_SCAN_OPTIONS
 /// whose digest is not in this list was modified. Computing the digest touches every page of the
 /// code section, so enable this only for release builds. Default: empty (off).
 @property (nonatomic, copy) NSArray<NSString *> *expectedTextSegmentDigests;
+
+/// Expected `__TEXT,__text` digests of embedded dynamic libraries, keyed by the library's trailing
+/// path components (for example `Auth.framework/Auth`), each mapped to its accepted lowercase hex
+/// SHA-256 digests. Images inside the app bundle are matched first. Compute the values with
+/// `Scripts/text-digest.swift` or `+[ISCIntegrityChecker textSegmentDigestOfImageNamed:]`.
+/// Default: empty (off).
+@property (nonatomic, copy) NSDictionary<NSString *, NSArray<NSString *> *> *expectedImageTextDigests;
 
 /// How the app is distributed. Default: `ISCDistributionAny`.
 @property (nonatomic) ISCDistribution expectedDistribution;

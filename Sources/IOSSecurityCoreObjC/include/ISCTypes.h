@@ -37,6 +37,8 @@ typedef NS_ENUM(NSInteger, ISCCategory) {
     ISCCategoryDebugger = 2,
     ISCCategoryHooking = 3,
     ISCCategoryIntegrity = 4,
+    /// Traffic interception (a configured proxy).
+    ISCCategoryNetwork = 5,
 };
 
 /// Bit set selecting which detector families a scan runs.
@@ -45,7 +47,8 @@ typedef NS_OPTIONS(NSUInteger, ISCChecks) {
     ISCChecksDebugger = 1 << 1,
     ISCChecksHooking = 1 << 2,
     ISCChecksIntegrity = 1 << 3,
-    ISCChecksAll = ISCChecksJailbreak | ISCChecksDebugger | ISCChecksHooking | ISCChecksIntegrity,
+    ISCChecksNetwork = 1 << 4,
+    ISCChecksAll = ISCChecksJailbreak | ISCChecksDebugger | ISCChecksHooking | ISCChecksIntegrity | ISCChecksNetwork,
 };
 
 /// How the host app expects to be distributed. Drives the integrity checks that only make sense for
@@ -83,9 +86,17 @@ typedef NS_ENUM(NSInteger, ISCFindingCode) {
     ISCFindingCodeJailbreakForkAllowed = 203,
     ISCFindingCodeJailbreakInjectedLibrary = 204,
     ISCFindingCodeJailbreakInjectionEnvironment = 205,
+    /// A jailbreak-detection bypass tool (Shadow, A-Bypass, FlyJB, ...) is installed or loaded.
+    ISCFindingCodeJailbreakBypassTool = 206,
+    /// Something listens on a loopback port only a jailbreak opens (SSH 22, checkra1n 44).
+    ISCFindingCodeJailbreakRemoteShellPort = 207,
 
     // Debugger
     ISCFindingCodeDebuggerAttached = 300,
+    /// A thread has a hardware breakpoint or watchpoint armed.
+    ISCFindingCodeDebuggerHardwareBreakpoint = 301,
+    /// The parent process is not launchd, so something else (usually a debugger) launched the app.
+    ISCFindingCodeDebuggerUnexpectedParent = 302,
 
     // Hooking / instrumentation
     ISCFindingCodeHookInstrumentationLibrary = 400,
@@ -97,6 +108,10 @@ typedef NS_ENUM(NSInteger, ISCFindingCode) {
     ISCFindingCodeHookProtectedMethodUnresolved = 406,
     ISCFindingCodeHookSelfIntegrity = 407,
     ISCFindingCodeHookUnexpectedBundleLibrary = 408,
+    /// A system function the detectors rely on starts with a branch out of the OS (an inline hook).
+    ISCFindingCodeHookInlinePatchedFunction = 409,
+    /// A system function the detectors rely on is bound to code outside the OS (fishhook, interposing).
+    ISCFindingCodeHookReboundSymbol = 410,
 
     // Integrity
     ISCFindingCodeIntegrityBundleIdentifierMismatch = 500,
@@ -107,6 +122,14 @@ typedef NS_ENUM(NSInteger, ISCFindingCode) {
     ISCFindingCodeIntegrityUnexpectedProvisioningProfile = 505,
     ISCFindingCodeIntegrityTeamIdentifierUnavailable = 506,
     ISCFindingCodeIntegrityTextSegmentUnavailable = 507,
+    /// An embedded library's code section digest is not one of the expected digests.
+    ISCFindingCodeIntegrityImageModified = 508,
+    /// An embedded library listed in `expectedImageTextDigests` is not loaded or cannot be read.
+    ISCFindingCodeIntegrityImageUnavailable = 509,
+
+    // Network
+    /// An HTTP, HTTPS, SOCKS or auto-config (PAC) proxy is configured.
+    ISCFindingCodeNetworkProxy = 600,
 };
 
 NS_ASSUME_NONNULL_END

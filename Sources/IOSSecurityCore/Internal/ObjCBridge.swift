@@ -16,6 +16,8 @@ extension SecurityConfiguration {
         options.additionalSuspiciousPaths = additionalSuspiciousPaths
         options.performsSandboxWriteProbe = performsSandboxWriteProbe
         options.performsForkProbe = performsForkProbe
+        options.additionalSuspiciousClasses = additionalSuspiciousClasses
+        options.probesRemoteShellPorts = probesRemoteShellPorts
 
         options.additionalSuspiciousLibraries = additionalSuspiciousLibraries
         options.allowedImagePathPrefixes = allowedImagePathPrefixes
@@ -34,6 +36,7 @@ extension SecurityConfiguration {
         options.expectedBundleIdentifier = expectedBundleIdentifier
         options.expectedTeamIdentifier = expectedTeamIdentifier
         options.expectedTextSegmentDigests = expectedTextSegmentDigests.sorted()
+        options.expectedImageTextDigests = expectedImageTextDigests.mapValues { $0.sorted() }
         options.expectedDistribution = expectedDistribution.objcValue
         return options
     }
@@ -68,6 +71,7 @@ extension SecurityThreat.Category {
         case .debugger: self = .debugger
         case .hooking: self = .hooking
         case .integrity: self = .integrity
+        case .network: self = .network
         @unknown default: self = .environment
         }
     }

@@ -23,18 +23,21 @@
 
 // MARK: - Runtime class-name obfuscation
 
-/// Set to `1` to give every public Objective-C class an opaque runtime name.
+/// `1` (the default) gives every public Objective-C class an opaque runtime name.
 ///
 /// - Source-level names do not change, so Swift and Objective-C callers are unaffected.
-/// - `class-dump`, `NSStringFromClass` and tools like Frida's `ObjC.classes` then show the opaque
-///   names listed below instead of `ISCJailbreakDetector` and friends.
-/// - Symbolicated crash logs show the opaque names too, which is why this is OFF by default.
+/// - `class-dump`, `strings`, `NSStringFromClass` and tools like Frida's `ObjC.classes` show the
+///   opaque names listed below instead of `ISCJailbreakDetector` and friends, so a static scan of
+///   the host app does not reveal which RASP checks it carries.
+/// - Symbolicated crash logs show the opaque names too.
 ///
-/// The value must be identical for the package build and for every file that imports these headers.
-/// To enable it, add `.define("ISC_SYMBOL_OBFUSCATION", to: "1")` to the `cSettings` of the
-/// `IOSSecurityCoreObjC` target in your fork of `Package.swift`.
+/// The value must be identical for the package build and for every file that imports these headers:
+/// the class symbols themselves are renamed (`_OBJC_CLASS_$_Ud3sG8`), so a Swift or Objective-C
+/// importer that sees a different value fails to link. That is why it is set here, in the one header
+/// every importer reads, and not through `cSettings` (which the Swift target's importer never sees).
+/// To turn it off, change the value below rather than defining it elsewhere.
 #ifndef ISC_SYMBOL_OBFUSCATION
-#define ISC_SYMBOL_OBFUSCATION 0
+#define ISC_SYMBOL_OBFUSCATION 1
 #endif
 
 #if ISC_SYMBOL_OBFUSCATION
@@ -55,5 +58,6 @@
 #define ISC_RN_HOOK_DETECTOR      ISC_RUNTIME_NAME("Te6tH2")
 #define ISC_RN_INTEGRITY_CHECKER  ISC_RUNTIME_NAME("Sf1uJ5")
 #define ISC_RN_SECURITY_SCANNER   ISC_RUNTIME_NAME("Rg7vK9")
+#define ISC_RN_NETWORK_DETECTOR   ISC_RUNTIME_NAME("Ph4wL7")
 
 #endif /* ISCObfuscationConfig_h */

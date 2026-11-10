@@ -20,4 +20,5 @@
 #import "ISCDebuggerDetector.h"
 #import "ISCHookDetector.h"
 #import "ISCIntegrityChecker.h"
+#import "ISCNetworkDetector.h"
 #import "ISCSecurityScanner.h"

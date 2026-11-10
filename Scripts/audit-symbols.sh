@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 FORBIDDEN_SYMBOLS='_stat$|_lstat$|_fstat$|_fstatat$|_getattrlist$|_NSFileCreationDate|_NSFileModificationDate|_systemUptime|_mach_absolute_time|_NSUserDefaults|_statfs|_statvfs|_volumeAvailableCapacity|_activeInputModes'
 
 # Plain-text indicators that must not be visible to `strings`.
-FORBIDDEN_STRINGS='Cydia|Sileo|MobileSubstrate|frida|FridaGadget|SSLKillSwitch|libhooker|/var/jb|substitute'
+FORBIDDEN_STRINGS='Cydia|Sileo|MobileSubstrate|frida|FridaGadget|SSLKillSwitch|libhooker|/var/jb|substitute|ShadowRuleset|ABypass|FlyJB|HTTPProxy|ProxyAutoConfig'
 
 if [ "$#" -gt 0 ]; then
     FILES=("$@")

@@ -5,6 +5,32 @@
 
 #import "ISCTestSupport.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+int ISCOpenLoopbackListener(uint16_t port) {
+    int listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0) {
+        return -1;
+    }
+    int reuse = 1;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_len = sizeof(address);
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(listener, (const struct sockaddr *)&address, sizeof(address)) != 0 || listen(listener, 4) != 0) {
+        close(listener);
+        return -1;
+    }
+    return listener;
+}
+
 ISCScanOptions *ISCTestOptions(void) {
     ISCScanOptions *options = [ISCScanOptions defaultOptions];
     options.includesBuiltInIndicators = NO;
@@ -12,6 +38,7 @@ ISCScanOptions *ISCTestOptions(void) {
     options.performsSandboxWriteProbe = NO;
     options.performsForkProbe = NO;
     options.probesInstrumentationPorts = NO;
+    options.probesRemoteShellPorts = NO;
     options.reportsUnknownLibraries = NO;
     return options;
 }

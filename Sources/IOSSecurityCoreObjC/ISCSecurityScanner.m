@@ -9,6 +9,7 @@
 #import "ISCHookDetector.h"
 #import "ISCIntegrityChecker.h"
 #import "ISCJailbreakDetector.h"
+#import "ISCNetworkDetector.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -65,6 +66,10 @@ static ISCFindingCode ISCSkipReason(void) {
     if (options.checks & ISCChecksIntegrity) {
         [findings addObjectsFromArray:[ISCIntegrityChecker scanWithOptions:options]];
         performed |= ISCChecksIntegrity;
+    }
+    if (options.checks & ISCChecksNetwork) {
+        [findings addObjectsFromArray:[ISCNetworkDetector scanWithOptions:options]];
+        performed |= ISCChecksNetwork;
     }
 
     // Most severe first; equal severities keep a stable order by code.

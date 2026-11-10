@@ -1,8 +1,8 @@
 # IOSSecurityCore
 
 Runtime application self-protection (RASP) for iOS apps. IOSSecurityCore tells your app when it is running
-on a jailbroken device, under a debugger, with an instrumentation framework such as Frida injected, or as a
-re-signed or patched copy, so **your app** can decide what to do about it.
+on a jailbroken device, under a debugger, with an instrumentation framework such as Frida injected, as a
+re-signed or patched copy, or behind an intercepting proxy, so **your app** can decide what to do about it.
 
 - **Detects, never hides.** It reports signals about the device your own app runs on. It does not touch other
   apps.
@@ -70,10 +70,15 @@ one `info` threat and `wasSkipped == true`.
 
 | Family | Signals |
 |---|---|
-| `jailbreak` | Known jailbreak files and directories, system directories replaced by symlinks, `DYLD_INSERT_LIBRARIES`, loaded tweak-injection libraries, a write outside the sandbox, a successful `fork()` |
-| `debugger` | The `P_TRACED` flag (Apple QA1361) |
-| `hooking` | Swizzled detectors (self-integrity), Frida/Cycript/SSL Kill Switch libraries, `frida-server` on disk or listening on loopback, Frida agent threads, images from unexpected locations, dylibs injected into the bundle, swizzled methods you register |
-| `integrity` | Bundle ID, Team ID (read from the app's own code signature), App Store expectations (no provisioning profile, encrypted binary, no `get-task-allow`), SHA-256 of `__TEXT,__text` |
+| `jailbreak` | Known jailbreak files and directories, system directories replaced by symlinks, `DYLD_INSERT_LIBRARIES`, loaded tweak-injection libraries, a write outside the sandbox, a successful `fork()`, an SSH (22) or checkra1n (44) shell on loopback, jailbreak-detection **bypass tools** (Shadow, A-Bypass, FlyJB, Liberty) by their Objective-C classes and their files |
+| `debugger` | The `P_TRACED` flag (Apple QA1361), armed hardware breakpoints or watchpoints, a parent process other than launchd (medium) |
+| `hooking` | Swizzled detectors (self-integrity), **system functions the checks rely on** (`access`, `open`, `sysctl`, `getenv`, dyld, ...) rebound by fishhook/interposing or inline-patched by Substrate/ElleKit/Dobby/Frida, Frida/Cycript/SSL Kill Switch libraries, `frida-server` on disk or listening on loopback, Frida agent threads, images from unexpected locations, dylibs injected into the bundle, swizzled methods you register |
+| `integrity` | Bundle ID, Team ID (read from the app's own code signature), App Store expectations (no provisioning profile, encrypted binary, no `get-task-allow`), SHA-256 of `__TEXT,__text` of the app and of embedded frameworks |
+| `network` | An HTTP, HTTPS, SOCKS or auto-config (PAC/WPAD) proxy, including one a VPN sets (medium: managed networks use proxies legitimately). The finding names the kind of proxy, never its address |
+
+Bypass tweaks do not patch this package; they hook the system calls its checks make, so files and libraries
+"are not there". That is why the `hooking` family verifies those system functions first: a check that
+found nothing is only meaningful when the calls it made were not intercepted.
 
 ### Protect your own methods
 
@@ -85,6 +90,21 @@ configuration.protectedMethods = [
 
 If a tweak replaces that implementation, it moves out of your image and the engine reports
 `.hookSwizzledMethod`.
+
+For a C function, ask whether its first instructions were replaced by a hook's trampoline:
+
+```objc
+if ([ISCHookDetector isFunctionInlineHooked:(const void *)verifyLicense]) { … }
+```
+
+### Catch jailbreak-bypass tools
+
+A bypass tweak can hide its files and its library, but not its Objective-C classes. Add the class names of
+tools you care about (Shadow's are built in):
+
+```swift
+configuration.additionalSuspiciousClasses = ["SomeBypassTweakController"]
+```
 
 ### Catch injected dylibs
 
@@ -104,6 +124,13 @@ swift Scripts/text-digest.swift path/to/YourApp.app/YourApp
 Put the printed digest in `configuration.expectedTextSegmentDigests`. Hashing reads the whole code section, so
 use it in release builds only, and compute it from the binary your users run (for App Store builds, print
 `IntegritySignals.textSegmentDigest` from a TestFlight build).
+
+Embedded dynamic frameworks work the same way, keyed by their trailing path components:
+
+```swift
+configuration.expectedImageTextDigests = ["Auth.framework/Auth": ["3f1c…"]]
+// From a TestFlight build: await SecurityEngine.shared.textSegmentDigest(ofImageNamed: "Auth.framework/Auth")
+```
 
 ## Deciding what to do
 
@@ -181,7 +208,7 @@ CI or by hand too: `Scripts/build-phase-audit.sh path/to/YourApp.app/YourApp`.
 ## Development
 
 ```
-swift test                       # macOS host
+swift test                       # macOS host (needs Xcode selected, not only the Command Line Tools)
 Scripts/audit-symbols.sh         # privacy and plain-text audit of the release build
 ```
 

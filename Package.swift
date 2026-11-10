@@ -32,6 +32,10 @@ let package = Package(
             publicHeadersPath: "include",
             cSettings: [
                 .headerSearchPath("Internal")
+            ],
+            linkerSettings: [
+                // CFNetworkCopySystemProxySettings (network checks).
+                .linkedFramework("CFNetwork")
             ]),
         // Swift layer: idiomatic, Sendable, async-first facade over the Objective-C layer.
         .target(

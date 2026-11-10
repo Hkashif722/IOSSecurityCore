@@ -36,7 +36,7 @@ ISC_RN_SECURITY_SCANNER
 + (instancetype)new NS_UNAVAILABLE;
 
 /// Runs the scan on the calling thread and blocks until it finishes. Typically a few milliseconds,
-/// plus up to ~150 ms when the loopback port probe is enabled and the port is filtered.
+/// plus up to ~150 ms per loopback port probe (three by default) when a port is filtered.
 /// **Never call this on the main thread.**
 - (ISCScanResult *)scan;
 

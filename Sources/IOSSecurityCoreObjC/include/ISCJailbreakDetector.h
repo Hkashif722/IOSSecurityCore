@@ -21,6 +21,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// 4. Loaded tweak-injection libraries (Substrate, Substitute, libhooker, ElleKit, ...).
 /// 5. A write outside the app sandbox, which only succeeds when the sandbox is broken.
 /// 6. `fork()`, which only succeeds when the sandbox is weakened.
+/// 7. A remote shell listening on loopback (SSH on 22, checkra1n on 44).
+/// 8. A jailbreak-detection bypass tool (Shadow, A-Bypass, FlyJB, Liberty): its Objective-C classes,
+///    which stay registered even when the tool hides its files and library, and its files.
 ///
 /// Modern rootless jailbreaks and bypass tweaks can defeat any single client-side check, so treat the
 /// result as a risk signal and combine it with server-side verification (for example App Attest).
@@ -35,6 +38,10 @@ ISC_RN_JAILBREAK_DETECTOR
 /// The subset of `paths` that exist on this device. Uses `access(2)` and `open(2)`; the `stat` family
 /// is deliberately avoided because Apple classifies it as a "required reason" API.
 + (NSArray<NSString *> *)existingPathsAmong:(NSArray<NSString *> *)paths;
+
+/// The subset of `classNames` that are registered with the Objective-C runtime. Uses
+/// `objc_lookUpClass`, which never triggers a class handler. Blank or malformed names are skipped.
++ (NSArray<NSString *> *)registeredClassesAmong:(NSArray<NSString *> *)classNames;
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

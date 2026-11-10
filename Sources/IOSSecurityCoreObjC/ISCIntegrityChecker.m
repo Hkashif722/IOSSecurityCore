@@ -52,6 +52,75 @@ static BOOL ISCLocateMainImage(ISCMainImage *image) {
     return NO;
 }
 
+/// The header of the first loaded 64-bit image whose path ends in the path components `name`, preferring
+/// images inside the app bundle so an embedded `Auth.framework/Auth` wins over anything else.
+static const struct mach_header_64 *ISCLocateImageNamed(NSString *name) {
+    if (name.length == 0) {
+        return NULL;
+    }
+    NSArray<NSString *> *bundleRoots = ISCAppBundleRoots();
+    const struct mach_header_64 *outsideBundle = NULL;
+    uint32_t count = _dyld_image_count();
+    for (uint32_t index = 0; index < count; index++) {
+        const char *cPath = _dyld_get_image_name(index);
+        const struct mach_header *header = _dyld_get_image_header(index);
+        if (cPath == NULL || header == NULL || header->magic != MH_MAGIC_64) {
+            continue;
+        }
+        NSString *path = [NSString stringWithUTF8String:cPath];
+        if (path == nil || !ISCPathHasComponentSuffix(path, name)) {
+            continue;
+        }
+        if (ISCPathMatchesAnyPrefix(path, bundleRoots)) {
+            return (const struct mach_header_64 *)header;
+        }
+        if (outsideBundle == NULL) {
+            outsideBundle = (const struct mach_header_64 *)header;
+        }
+    }
+    return outsideBundle;
+}
+
+/// Lowercase hex SHA-256 of `__TEXT,__text` in the loaded image at `header`, or nil.
+static NSString *ISCTextDigestOfImage(const struct mach_header_64 *header) {
+    if (header == NULL) {
+        return nil;
+    }
+    unsigned long size = 0;
+    const uint8_t *text = getsectiondata(header, SEG_TEXT, SECT_TEXT, &size);
+    if (text == NULL || size == 0) {
+        return nil;
+    }
+
+    CC_SHA256_CTX context;
+    CC_SHA256_Init(&context);
+    size_t remaining = size;
+    while (remaining > 0) {
+        size_t chunk = remaining < ISCDigestChunkSize ? remaining : ISCDigestChunkSize;
+        CC_SHA256_Update(&context, text, (CC_LONG)chunk);
+        text += chunk;
+        remaining -= chunk;
+    }
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &context);
+
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (size_t index = 0; index < CC_SHA256_DIGEST_LENGTH; index++) {
+        [hex appendFormat:@"%02x", digest[index]];
+    }
+    return hex;
+}
+
+/// Whether `digest` is one of `expected` (case-insensitive). Non-string entries are ignored.
+static BOOL ISCDigestIsExpected(NSString *digest, NSArray *expected) {
+    for (id candidate in expected) {
+        if ([candidate isKindOfClass:NSString.class] && [candidate caseInsensitiveCompare:digest] == NSOrderedSame) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 /// Calls `visit` for each load command, stopping at the first malformed one.
 static void ISCEnumerateLoadCommands(const struct mach_header_64 *header,
                                      void (^visit)(const struct load_command *command)) {
@@ -222,29 +291,11 @@ static NSDictionary<NSString *, id> *ISCMainExecutableEntitlements(void) {
     if (!ISCLocateMainImage(&image)) {
         return nil;
     }
-    unsigned long size = 0;
-    const uint8_t *text = getsectiondata(image.header, SEG_TEXT, SECT_TEXT, &size);
-    if (text == NULL || size == 0) {
-        return nil;
-    }
+    return ISCTextDigestOfImage(image.header);
+}
 
-    CC_SHA256_CTX context;
-    CC_SHA256_Init(&context);
-    size_t remaining = size;
-    while (remaining > 0) {
-        size_t chunk = remaining < ISCDigestChunkSize ? remaining : ISCDigestChunkSize;
-        CC_SHA256_Update(&context, text, (CC_LONG)chunk);
-        text += chunk;
-        remaining -= chunk;
-    }
-    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256_Final(digest, &context);
-
-    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
-    for (size_t index = 0; index < CC_SHA256_DIGEST_LENGTH; index++) {
-        [hex appendFormat:@"%02x", digest[index]];
-    }
-    return hex;
++ (NSString *)textSegmentDigestOfImageNamed:(NSString *)name {
+    return ISCTextDigestOfImage(ISCLocateImageNamed(name));
 }
 
 + (NSDictionary<NSString *, id> *)entitlementsFromCodeSignatureData:(NSData *)data {
@@ -335,19 +386,42 @@ static NSDictionary<NSString *, id> *ISCMainExecutableEntitlements(void) {
         if (digest == nil) {
             [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentUnavailable
                                                           detail:nil]];
-        } else {
-            BOOL isExpected = NO;
-            for (NSString *expected in options.expectedTextSegmentDigests) {
-                if ([expected caseInsensitiveCompare:digest] == NSOrderedSame) {
-                    isExpected = YES;
-                    break;
-                }
-            }
-            if (!isExpected) {
-                [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentModified
-                                                              detail:digest]];
-            }
+        } else if (!ISCDigestIsExpected(digest, options.expectedTextSegmentDigests)) {
+            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentModified
+                                                          detail:digest]];
         }
+    }
+
+    // 5. The code of embedded libraries.
+    NSMutableArray<NSString *> *modified = [NSMutableArray array];
+    NSMutableArray<NSString *> *unavailable = [NSMutableArray array];
+    NSDictionary *imageDigests = options.expectedImageTextDigests;
+    // Configuration comes from the host app: skip anything malformed instead of raising.
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (id name in imageDigests) {
+        id expected = imageDigests[name];
+        if ([name isKindOfClass:NSString.class] && [name length] > 0 &&
+            [expected isKindOfClass:NSArray.class] && [expected count] > 0) {
+            [names addObject:name];
+        }
+    }
+    [names sortUsingSelector:@selector(compare:)];
+    for (NSString *name in names) {
+        NSArray *expected = imageDigests[name];
+        NSString *digest = ISCTextDigestOfImage(ISCLocateImageNamed(name));
+        if (digest == nil) {
+            [unavailable addObject:name];
+        } else if (!ISCDigestIsExpected(digest, expected)) {
+            [modified addObject:[NSString stringWithFormat:@"%@: %@", name, digest]];
+        }
+    }
+    if (modified.count > 0) {
+        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityImageModified
+                                                      detail:ISCSummarizeValues(modified, ISCDetailLimit)]];
+    }
+    if (unavailable.count > 0) {
+        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityImageUnavailable
+                                                      detail:ISCSummarizeValues(unavailable, ISCDetailLimit)]];
     }
 
     return findings;

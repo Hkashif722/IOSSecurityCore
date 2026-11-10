@@ -47,6 +47,8 @@
         _additionalSuspiciousPaths = @[];
         _performsSandboxWriteProbe = YES;
         _performsForkProbe = YES;
+        _additionalSuspiciousClasses = @[];
+        _probesRemoteShellPorts = YES;
 
         _additionalSuspiciousLibraries = @[];
         _allowedImagePathPrefixes = @[];
@@ -58,6 +60,7 @@
         _expectedBundleIdentifier = nil;
         _expectedTeamIdentifier = nil;
         _expectedTextSegmentDigests = @[];
+        _expectedImageTextDigests = @{};
         _expectedDistribution = ISCDistributionAny;
     }
     return self;
@@ -72,6 +75,8 @@
     copy.additionalSuspiciousPaths = self.additionalSuspiciousPaths;
     copy.performsSandboxWriteProbe = self.performsSandboxWriteProbe;
     copy.performsForkProbe = self.performsForkProbe;
+    copy.additionalSuspiciousClasses = self.additionalSuspiciousClasses;
+    copy.probesRemoteShellPorts = self.probesRemoteShellPorts;
 
     copy.additionalSuspiciousLibraries = self.additionalSuspiciousLibraries;
     copy.allowedImagePathPrefixes = self.allowedImagePathPrefixes;
@@ -83,6 +88,7 @@
     copy.expectedBundleIdentifier = self.expectedBundleIdentifier;
     copy.expectedTeamIdentifier = self.expectedTeamIdentifier;
     copy.expectedTextSegmentDigests = self.expectedTextSegmentDigests;
+    copy.expectedImageTextDigests = self.expectedImageTextDigests;
     copy.expectedDistribution = self.expectedDistribution;
     return copy;
 }
