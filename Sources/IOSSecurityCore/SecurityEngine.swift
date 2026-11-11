@@ -22,7 +22,7 @@ import os
 /// }
 ///
 /// // Or with async/await.
-/// let report = await SecurityEngine.shared.evaluate()
+/// let report = try await SecurityEngine.shared.evaluate()
 ///
 /// // A debugger can attach at any time, so keep watching.
 /// for await report in SecurityEngine.shared.monitor() { … }
@@ -56,6 +56,13 @@ public final class SecurityEngine: Sendable {
         state = OSAllocatedUnfairLock(initialState: State(configuration: configuration))
     }
 
+    deinit {
+        // A task awaiting `reports` must see the sequence end, not wait forever for an engine that is gone.
+        for subscriber in state.withLock({ Array($0.subscribers.values) }) {
+            subscriber.finish()
+        }
+    }
+
     // MARK: - Configuration
 
     /// The configuration in effect. Evaluations that already started keep the one they began with.
@@ -64,22 +71,32 @@ public final class SecurityEngine: Sendable {
         set { state.withLock { $0.configuration = newValue } }
     }
 
-    /// Replaces the configuration. The same as assigning ``configuration``.
-    public func configure(_ configuration: SecurityConfiguration) {
-        self.configuration = configuration
-    }
-
     // MARK: - Evaluation
 
     /// Evaluates the environment off the calling thread and returns the report.
     ///
-    /// A scan takes milliseconds and cannot be interrupted part-way, so this always runs to completion
-    /// and returns a report, even if the calling task is cancelled meanwhile.
+    /// Scans run one at a time, so a call can wait behind others. If the calling task is cancelled before
+    /// its scan starts, the scan does not run and this throws `CancellationError`. A scan that has started
+    /// takes milliseconds and finishes; its report is returned.
     ///
     /// - Parameter checks: Run only these check families instead of the configured ones.
-    public func evaluate(checks: Set<SecurityCheck>? = nil) async -> SecurityReport {
-        await withCheckedContinuation { continuation in
-            evaluate(checks: checks) { continuation.resume(returning: $0) }
+    /// - Throws: `CancellationError`, and nothing else.
+    public func evaluate(checks: Set<SecurityCheck>? = nil) async throws -> SecurityReport {
+        try Task.checkCancellation()
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
+        let snapshot = configuration
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async { [self] in
+                    if cancelled.withLock({ $0 }) {
+                        continuation.resume(throwing: CancellationError())
+                    } else {
+                        continuation.resume(returning: performScan(configuration: snapshot, checks: checks))
+                    }
+                }
+            }
+        } onCancel: {
+            cancelled.withLock { $0 = true }
         }
     }
 
@@ -132,7 +149,9 @@ public final class SecurityEngine: Sendable {
     /// and ``monitor(interval:checks:)``, in the order they finish.
     ///
     /// Delivery starts when iteration starts, so reports from before the first `for await` are not
-    /// replayed. A slow consumer keeps the newest few reports and drops the rest.
+    /// replayed. A slow consumer keeps the newest few reports and drops the rest. The sequence ends when
+    /// the engine is deallocated. To stop earlier, cancel the consuming task; that is the supported way to
+    /// unsubscribe, and on current toolchains letting the iterator go out of scope does the same.
     ///
     /// ```swift
     /// for await report in SecurityEngine.shared.reports where report.isCompromised { … }
@@ -144,19 +163,12 @@ public final class SecurityEngine: Sendable {
     /// The reports an engine produces, as an asynchronous sequence. Obtain one from ``SecurityEngine/reports``.
     public struct Reports: AsyncSequence, Sendable {
         public typealias Element = SecurityReport
+        public typealias AsyncIterator = AsyncStream<SecurityReport>.Iterator
 
         fileprivate let engine: SecurityEngine
 
-        public func makeAsyncIterator() -> Iterator {
-            Iterator(stream: engine.makeReportStream().makeAsyncIterator())
-        }
-
-        public struct Iterator: AsyncIteratorProtocol {
-            fileprivate var stream: AsyncStream<SecurityReport>.Iterator
-
-            public mutating func next() async -> SecurityReport? {
-                await stream.next()
-            }
+        public func makeAsyncIterator() -> AsyncIterator {
+            engine.makeReportStream().makeAsyncIterator()
         }
     }
 
@@ -210,8 +222,12 @@ public final class SecurityEngine: Sendable {
     // MARK: - Internals
 
     private func performScan(configuration: SecurityConfiguration, checks: Set<SecurityCheck>?) -> SecurityReport {
+        let requested = checks ?? configuration.checks
         let options = configuration.makeScanOptions(checksOverride: checks)
-        let report = SecurityReport(ISCSecurityScanner(options: options).scan())
+        let report = SecurityReport(ISCPerformScan(options)).verified(
+            requested: requested,
+            scansUnsupportedEnvironments: configuration.scansUnsupportedEnvironments
+        )
         for subscriber in state.withLock({ Array($0.subscribers.values) }) {
             subscriber.yield(report)
         }

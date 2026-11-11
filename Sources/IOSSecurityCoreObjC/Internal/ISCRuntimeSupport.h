@@ -9,9 +9,11 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "ISCVisibility.h"
 #include <stdbool.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
 
 #if __has_feature(ptrauth_calls)
 #include <ptrauth.h>
@@ -32,44 +34,44 @@ static const NSUInteger ISCDetailLimit = 5;
 /// string (one blank entry in a host's configuration would crash the app at launch). This returns `NULL`
 /// for an empty string, a string containing a NUL, and a string that cannot be encoded as UTF-8. The
 /// pointer is valid for as long as `path` is.
-const char *_Nullable ISCSafeCPath(NSString *path);
+ISC_HIDDEN const char *_Nullable ISCSafeCPath(NSString *path);
 
 /// `true` if `path` can be reached with `access(2)` or `open(2)`.
 ///
 /// The `stat` family is deliberately not used: Apple lists it as a "required reason" API (file
 /// timestamps) that would force a privacy-manifest declaration this package cannot honestly make.
-bool ISCPathExists(const char *path);
+ISC_HIDDEN bool ISCPathExists(const char *path);
 
 /// `true` if `path` is itself a symbolic link (`readlink(2)` succeeds).
-bool ISCPathIsSymbolicLink(const char *path);
+ISC_HIDDEN bool ISCPathIsSymbolicLink(const char *path);
 
 // MARK: - Images and paths
 
 /// Paths of all images dyld has loaded, in load order.
-NSArray<NSString *> *ISCCopyLoadedImagePaths(void);
+ISC_HIDDEN NSArray<NSString *> *ISCCopyLoadedImagePaths(void);
 
 /// Drops a leading `/private`, so `/private/var/x` and `/var/x` compare equal.
-NSString *ISCCanonicalizePath(NSString *path);
+ISC_HIDDEN NSString *ISCCanonicalizePath(NSString *path);
 
 /// `YES` if `path` has any of `prefixes` as a prefix. `/private/var/...` and `/var/...` count as the same
 /// location.
-BOOL ISCPathMatchesAnyPrefix(NSString *path, NSArray<NSString *> *prefixes);
+ISC_HIDDEN BOOL ISCPathMatchesAnyPrefix(NSString *path, NSArray<NSString *> *prefixes);
 
 /// The app bundle directory (with trailing slash) and, inside an app extension, the containing `.app`.
-NSArray<NSString *> *ISCAppBundleRoots(void);
+ISC_HIDDEN NSArray<NSString *> *ISCAppBundleRoots(void);
 
 /// The image that contains `address`. `outPath` receives its path and `outBase` its load address.
-BOOL ISCImageForAddress(const void *address,
+ISC_HIDDEN BOOL ISCImageForAddress(const void *address,
                         NSString *_Nullable *_Nullable outPath,
                         const void *_Nullable *_Nullable outBase);
 
 /// `YES` when the Mach-O image whose header is at `base` lives in the dyld shared cache, which holds
 /// every library the OS ships. Tweaks, instrumentation agents and the app's own code never do.
-BOOL ISCImageIsInSharedCache(const void *_Nullable base);
+ISC_HIDDEN BOOL ISCImageIsInSharedCache(const void *_Nullable base);
 
 /// `YES` when `path` equals `suffix` or ends in `/` followed by `suffix`: whole path components only,
 /// so `Auth.framework/Auth` does not match `EvilAuth.framework/Auth`. An empty suffix never matches.
-BOOL ISCPathHasComponentSuffix(NSString *path, NSString *suffix);
+ISC_HIDDEN BOOL ISCPathHasComponentSuffix(NSString *path, NSString *suffix);
 
 // MARK: - Network
 
@@ -78,14 +80,14 @@ BOOL ISCPathHasComponentSuffix(NSString *path, NSString *suffix);
 static const int ISCPortProbeTimeoutMilliseconds = 150;
 
 /// Whether something is listening on the loopback interface at `port`. Never leaves the device.
-BOOL ISCLoopbackPortIsOpen(uint16_t port, int timeoutMilliseconds);
+ISC_HIDDEN BOOL ISCLoopbackPortIsOpen(uint16_t port, int timeoutMilliseconds);
 
 // MARK: - Strings
 
 /// The members of `strings` that contain any of `needles`, ignoring case.
-NSArray<NSString *> *ISCStringsContainingAny(NSArray<NSString *> *strings, NSArray<NSString *> *needles);
+ISC_HIDDEN NSArray<NSString *> *ISCStringsContainingAny(NSArray<NSString *> *strings, NSArray<NSString *> *needles);
 
 /// Joins up to `limit` values with ", " and appends "(+N more)" when some were left out.
-NSString *ISCSummarizeValues(NSArray<NSString *> *values, NSUInteger limit);
+ISC_HIDDEN NSString *ISCSummarizeValues(NSArray<NSString *> *values, NSUInteger limit);
 
 NS_ASSUME_NONNULL_END

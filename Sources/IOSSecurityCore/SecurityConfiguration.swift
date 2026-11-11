@@ -15,7 +15,7 @@ import Foundation
 /// var configuration = SecurityConfiguration()
 /// configuration.integrity.expectedBundleIdentifier = "com.example.app"
 /// configuration.integrity.expectedTeamIdentifier = "ABCDE12345"
-/// SecurityEngine.shared.configure(configuration)
+/// SecurityEngine.shared.configuration = configuration
 /// ```
 public struct SecurityConfiguration: Hashable, Sendable {
 
@@ -105,7 +105,9 @@ public struct SecurityConfiguration: Hashable, Sendable {
 
         /// File names of every dynamic library you embed in the app bundle, for example `Auth.framework/Auth`
         /// or `libFoo.dylib`. When non-empty, any other image loaded from inside the bundle is reported: the
-        /// effective defence against a repackaged app with an injected dylib. Default: empty (off).
+        /// effective defence against a repackaged app with an injected dylib. The list also narrows the
+        /// system-function check: a system function bound to, or branching into, a bundle image not listed here
+        /// is reported. Without a list, every bundle image is trusted there. Default: empty (off).
         public var allowedBundleLibraries: [String] = []
 
         /// Probe the loopback interface for a listening `frida-server`. Never leaves the device. Default: `true`.

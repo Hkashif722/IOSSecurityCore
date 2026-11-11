@@ -29,10 +29,11 @@ public struct SecurityPolicy: Hashable, Sendable {
     public var minimumSeverity: SecurityThreat.Severity
 
     /// Threat kinds that never count, whatever their severity. For a signal you have confirmed is a false
-    /// positive in your app, or one you handle some other way.
+    /// positive in your app, or one you handle some other way. A kind listed here is ignored even if it
+    /// is also in ``escalatedKinds``.
     public var ignoredKinds: Set<SecurityThreat.Kind>
 
-    /// Threat kinds that always count, whatever their severity.
+    /// Threat kinds that count whatever their severity, unless ``ignoredKinds`` also lists them, which wins.
     public var escalatedKinds: Set<SecurityThreat.Kind>
 
     public init(

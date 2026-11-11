@@ -7,6 +7,7 @@
 //
 
 #import "ISCDebuggerDetector.h"
+#import "ISCFindingSupport.h"
 #import "ISCDetector.h"
 #import "ISCObfuscation.h"
 
@@ -80,14 +81,7 @@ static void ISCCountArmedDebugRegisters(unsigned *outBreakpointThreads, unsigned
 
 // MARK: - ISCDebuggerDetector
 
-@interface ISCDebuggerDetector () <ISCDetector>
-@end
-
 @implementation ISCDebuggerDetector
-
-+ (ISCChecks)check {
-    return ISCChecksDebugger;
-}
 
 + (BOOL)isDebuggerAttached {
     return ISCProcessIsTraced();
@@ -104,15 +98,15 @@ static void ISCCountArmedDebugRegisters(unsigned *outBreakpointThreads, unsigned
     return getppid() != ISCLaunchdProcessIdentifier;
 }
 
-+ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
-    if (!ISCDetectorIsEnabled(self, options)) {
+NSArray<ISCFinding *> *ISCDebuggerScan(ISCScanOptions *options) {
+    if (!ISCChecksInclude(options, ISCChecksDebugger)) {
         return @[];
     }
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
 
-    // 1. The kernel's own answer. Goes through the method so a swizzle shows up in self-integrity.
-    if (self.isDebuggerAttached) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeDebuggerAttached detail:nil]];
+    // 1. The kernel's own answer.
+    if (ISCProcessIsTraced()) {
+        [findings addObject:ISCMakeFinding(ISCFindingCodeDebuggerAttached, nil)];
     }
 
     // 2. Armed debug registers.
@@ -123,20 +117,22 @@ static void ISCCountArmedDebugRegisters(unsigned *outBreakpointThreads, unsigned
         NSString *detail = [NSString stringWithFormat:@"%@=%u, %@=%u",
                             ISC_OBF_NSSTRING("breakpoint threads"), breakpoints,
                             ISC_OBF_NSSTRING("watchpoint threads"), watchpoints];
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeDebuggerHardwareBreakpoint
-                                                      detail:detail]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeDebuggerHardwareBreakpoint, detail)];
     }
 
     // 3. Launched by something other than launchd: on a device that is almost always a debugger.
     if (options.includesBuiltInIndicators) {
         pid_t parent = getppid();
         if (parent != ISCLaunchdProcessIdentifier) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeDebuggerUnexpectedParent
-                                                          detail:[NSString stringWithFormat:@"%d", (int)parent]]];
+            [findings addObject:ISCMakeFinding(ISCFindingCodeDebuggerUnexpectedParent, [NSString stringWithFormat:@"%d", (int)parent])];
         }
     }
 
     return findings;
+}
+
++ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    return ISCDebuggerScan(options);
 }
 
 + (BOOL)denyDebuggerAttachment {

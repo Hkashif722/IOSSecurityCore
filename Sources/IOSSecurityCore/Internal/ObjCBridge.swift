@@ -97,13 +97,63 @@ extension SecurityThreat.Severity {
     }
 }
 
+extension SecurityReport.SkipReason {
+    /// Why this build skips a scan, from compile-time facts and one runtime fact the Objective-C layer cannot
+    /// change: `nil` on a physical iPhone or iPad.
+    static var expectedForThisProcess: Self? {
+        #if targetEnvironment(simulator)
+        return .simulator
+        #elseif targetEnvironment(macCatalyst)
+        return .macRuntime
+        #elseif os(iOS)
+        return ProcessInfo.processInfo.isiOSAppOnMac ? .macRuntime : nil
+        #else
+        return .unsupportedPlatform
+        #endif
+    }
+}
+
 extension SecurityReport {
+    /// The report, checked against what the Swift layer knows independently of the Objective-C result: whether
+    /// this process should have been skipped, and which families were asked for. A result that disagrees
+    /// was tampered with on the way (a forged "skipped" on a real device, a family that silently did not
+    /// run), so the report gains a critical ``SecurityThreat/Kind/hookSelfIntegrity`` threat and loses the
+    /// skip it claimed.
+    func verified(requested: Set<SecurityCheck>, scansUnsupportedEnvironments: Bool) -> SecurityReport {
+        let expectedSkip = scansUnsupportedEnvironments ? nil : SkipReason.expectedForThisProcess
+        let problem: String?
+        if skipReason != expectedSkip {
+            problem = "skip \(skipReason?.rawValue ?? "none"), expected \(expectedSkip?.rawValue ?? "none")"
+        } else if skipReason == nil && performedChecks != requested {
+            let names = { (checks: Set<SecurityCheck>) in checks.map(\.rawValue).sorted().joined(separator: "+") }
+            problem = "performed \(names(performedChecks)), requested \(names(requested))"
+        } else {
+            problem = nil
+        }
+        guard let problem else { return self }
+
+        let tampering = SecurityThreat(ISCFinding(code: .hookSelfIntegrity, detail: problem))
+        return SecurityReport(
+            threats: [tampering] + threats,
+            performedChecks: performedChecks,
+            startedAt: startedAt,
+            duration: duration,
+            exactSkipReason: nil
+        )
+    }
+
     init(_ result: ISCScanResult) {
+        let threats = result.findings.map(SecurityThreat.init)
+        // The scanner ran nothing and said why: that is the only time a report is skipped.
+        let skipReason = result.performedChecks.isEmpty
+            ? threats.lazy.compactMap { SkipReason(kind: $0.kind) }.first
+            : nil
         self.init(
-            threats: result.findings.map(SecurityThreat.init),
+            threats: threats,
             performedChecks: Set(objc: result.performedChecks),
             startedAt: result.startedAt,
-            duration: result.duration
+            duration: result.duration,
+            skipReason: skipReason
         )
     }
 }

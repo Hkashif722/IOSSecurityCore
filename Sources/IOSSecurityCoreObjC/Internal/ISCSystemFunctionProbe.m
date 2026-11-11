@@ -16,6 +16,7 @@
 //
 
 #import "ISCSystemFunctionProbe.h"
+#import "ISCFindingSupport.h"
 #import "ISCCodeTrust.h"
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
@@ -66,7 +67,7 @@ static NSString *ISCDescribeRedirect(NSString *name, NSString *destination) {
     return [NSString stringWithFormat:@"%@ -> %@", name, destination ?: ISC_OBF_NSSTRING("unknown image")];
 }
 
-NSArray<ISCFinding *> *ISCSystemFunctionFindings(NSArray<NSString *> *extraTrustedPrefixes) {
+NSArray<ISCFinding *> *ISCSystemFunctionFindings(const ISCCodeTrust *trust) {
     const void *addresses[] = {ISC_SYSTEM_FUNCTIONS(ISC_SYSTEM_FUNCTION_ADDRESS)};
     size_t count = sizeof(addresses) / sizeof(addresses[0]);
 
@@ -78,22 +79,20 @@ NSArray<ISCFinding *> *ISCSystemFunctionFindings(NSArray<NSString *> *extraTrust
             continue;
         }
         NSString *path = nil;
-        if (!ISCAddressIsTrustedCode(bound, extraTrustedPrefixes, &path)) {
+        if (!ISCAddressIsTrustedCode(bound, trust, &path)) {
             // Bound elsewhere: the code at `bound` is the hook itself, so there is no point decoding it.
             [rebound addObject:ISCDescribeRedirect(ISCSystemFunctionNames()[index], path)];
-        } else if (ISCFunctionIsInlineHooked(bound, extraTrustedPrefixes, &path)) {
+        } else if (ISCFunctionIsInlineHooked(bound, trust, &path)) {
             [patched addObject:ISCDescribeRedirect(ISCSystemFunctionNames()[index], path)];
         }
     }
 
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
     if (rebound.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeHookReboundSymbol
-                                                      detail:ISCSummarizeValues(rebound, ISCDetailLimit)]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeHookReboundSymbol, ISCSummarizeValues(rebound, ISCDetailLimit))];
     }
     if (patched.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeHookInlinePatchedFunction
-                                                      detail:ISCSummarizeValues(patched, ISCDetailLimit)]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeHookInlinePatchedFunction, ISCSummarizeValues(patched, ISCDetailLimit))];
     }
     return findings;
 }

@@ -45,8 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working once the XML slot is dropped.
 - `SecurityPolicy`: the rule that turns a report into a verdict (`minimumSeverity`, `ignoredKinds`,
   `escalatedKinds`), and `SecurityReport.isCompromised(under:)`. `isCompromised` is the default policy.
-- `SecurityReport.skipReason` (`simulator`, `macRuntime`, `unsupportedPlatform`); `wasSkipped` is derived
-  from it, so an evaluation that requested no check families is no longer reported as skipped.
+- `SecurityReport.skipReason` (`simulator`, `macRuntime`, `unsupportedPlatform`), stored with the report and
+  set by the scanner; `wasSkipped` is derived from it, so an evaluation that requested no check families is no
+  longer reported as skipped. Reports encoded before the field existed still decode.
 - `SecurityEngine.reports`, a `Sendable` `AsyncSequence` of every report the engine produces.
 
 ### Changed
@@ -54,8 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values hold what used to be twenty flat properties (`configuration.integrity.expectedTeamIdentifier`).
   `checks` and the test hooks stay at the top level. The Objective-C `ISCScanOptions` is unchanged.
 - **Breaking.** `SecurityEngine.reports` is an `AsyncSequence`, not a Combine publisher; the package no
-  longer imports Combine. `SecurityEngine` is `Sendable` without `@unchecked`, and `configuration` is
-  settable (`configure(_:)` remains).
+  longer imports Combine. `SecurityEngine` is `Sendable` without `@unchecked`; `configuration` is settable
+  and `configure(_:)` is gone. Deallocating an engine ends its `reports` sequences instead of leaving
+  consumers waiting.
+- **Breaking.** `SecurityEngine.evaluate(checks:)` is `async throws`. It throws `CancellationError`, and nothing
+  else, when the calling task is cancelled before its scan starts; such a scan never runs or publishes. Call
+  it with `try await` (or `try?` where cancellation needs no handling).
 - **Breaking.** Swift tools version 6.0 and Swift 6 language mode: the package needs Xcode 16 or later.
 - `ISCHookDetector` is split into probes under `Internal/`: self-integrity, system functions,
   instrumentation, and the shared code-trust helpers. Behaviour is unchanged.
@@ -69,5 +74,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of naming each family. Every detector now honours `ISCScanOptions.checks` when called directly (before,
   only the debugger and network detectors did).
 - `SecurityEngine` keeps its configuration in an `OSAllocatedUnfairLock` instead of an `NSLock`.
-- `SecurityConfiguration.includesBuiltInIndicators` and `scansUnsupportedEnvironments` are test hooks and
-  now require `@_spi(Testing) import IOSSecurityCore`. The Objective-C properties are unchanged.
+- **Breaking.** `SecurityConfiguration.includesBuiltInIndicators` and `scansUnsupportedEnvironments` are test
+  hooks and now require `@_spi(Testing) import IOSSecurityCore`; code that set them without that import no
+  longer compiles. The Objective-C properties are unchanged.
+- Self-integrity trusts only this package's own image and the OS. A detector inline-patched to branch into
+  a dylib injected into the app bundle is now reported; before, any image in the bundle counted as trusted.
+- With `allowedBundleLibraries` set, the system-function check trusts only the listed bundle libraries, so
+  a system function rebound into an injected dylib is reported. Without a list, nothing changes.
+- The scans read their signals through plain C functions instead of Objective-C methods, and the platform
+  gate and family bits are data, not methods: swizzling `+hasEmbeddedProvisioningProfile`,
+  `+isSupportedDevicePlatform` and the like no longer changes a scan's result. Every public accessor is on
+  the self-integrity watch list, because hosts and `IntegritySignals` still read them.
+- Every C function private to the package has hidden visibility, so none is exported and their names
+  leave the binary when the app is stripped. The public C functions (`ISCPerformScan` and the obfuscation
+  helpers) get opaque linker names under `ISC_SYMBOL_OBFUSCATION`, like the classes. `Scripts/audit-symbols.sh`
+  fails on any readable exported symbol, and CI also runs the release, AddressSanitizer and Release-Simulator
+  test passes.
+- `ISCPerformScan(options)`: the scan as a plain C function. `-[ISCSecurityScanner scan]` and the Swift
+  engine call it, the scanner reaches each detector through a C function pointer, and every finding is built
+  by a C factory, so swizzling `-scan`, a detector's `+scanWithOptions:` or `-[ISCFinding
+  initWithCode:detail:]` no longer redirects or empties a scan.
+- Self-integrity also checks the package's own C scan functions for inline patches, and the getters a
+  report is read back through (`ISCFinding`, `ISCScanResult`).
+- The Swift engine verifies each result against facts the Objective-C layer cannot change: whether this
+  build should skip (compile-time), and which families it requested. A forged skip or a family that
+  silently did not run adds a critical `hookSelfIntegrity` threat and clears the claimed skip.
+- DER entitlements: an integer wider than 64 bits becomes `NSNull` (a 9-byte unsigned value becomes an
+  unsigned number) instead of failing the whole dictionary, and a `GeneralizedTime` becomes an `NSDate`,
+  the same type the XML slot yields.

@@ -44,7 +44,7 @@ configuration.integrity.expectedTeamIdentifier = "ABCDE12345"
 #if !DEBUG
 configuration.integrity.expectedDistribution = .appStore   // release builds only
 #endif
-SecurityEngine.shared.configure(configuration)
+SecurityEngine.shared.configuration = configuration
 
 // 2. Evaluate at launch. This does not block the main thread.
 SecurityEngine.shared.evaluate { report in
@@ -54,7 +54,7 @@ SecurityEngine.shared.evaluate { report in
 }
 
 // 3. Or with async/await, and keep watching: debuggers attach after launch.
-let report = await SecurityEngine.shared.evaluate()
+let report = try await SecurityEngine.shared.evaluate()   // throws only CancellationError
 for await report in SecurityEngine.shared.monitor(interval: 30) { … }
 
 // 4. Or observe every report the engine produces, wherever it was requested.
@@ -214,6 +214,10 @@ CI or by hand too: `Scripts/build-phase-audit.sh path/to/YourApp.app/YourApp`.
 - Client-side detection is not proof. A determined attacker on a jailbroken device can bypass any single
   check; the checks raise the cost and give your server data to judge.
 - The jailbreak checks cannot see a jailbreak that hides well. Combine them with server-side verification.
+- A scan runs through C functions, not Objective-C methods, so swizzling a method cannot redirect or empty it,
+  and the Swift layer cross-checks each result against what it asked for. Patching the machine code itself
+  is still possible on a device with code signing disabled. The package looks for that too, but code that
+  checks itself can be patched to skip the check. Only a decision made on your server is out of reach.
 - Results on the Simulator and macOS are not meaningful, so the checks are skipped there.
 - **It cannot hide your class names.** Class/selector names and Swift type metadata are compiled into the
   binary before the app runs, so `class-dump`/`strings` read them off the shipped file no matter what runs at
@@ -224,7 +228,9 @@ CI or by hand too: `Scripts/build-phase-audit.sh path/to/YourApp.app/YourApp`.
 
 ```
 swift test                       # macOS host (needs Xcode selected, not only the Command Line Tools)
-Scripts/audit-symbols.sh         # privacy and plain-text audit of the release build
+swift test -c release            # the same, optimised: self-integrity must verify clean in release code
+swift test --sanitize=address    # memory safety of the parsers and probes
+Scripts/audit-symbols.sh         # privacy, plain-text and exported-symbol audit of the release build
 ```
 
 ## License

@@ -106,7 +106,9 @@ ISC_RN_SCAN_OPTIONS
 
 /// File names (for example `Auth.framework/Auth`, `libFoo.dylib`) of every dynamic library you embed
 /// in the app bundle. When non-empty, any other image loaded from inside the bundle is reported. This
-/// is the effective defence against a repackaged app with an injected dylib. Default: empty (off).
+/// is the effective defence against a repackaged app with an injected dylib. The list also narrows the
+/// system-function check: a system function bound to, or branching into, a bundle image not listed here is
+/// reported. Without a list, every bundle image is trusted there. Default: empty (off).
 @property (nonatomic, copy) NSArray<NSString *> *allowedBundleLibraries;
 
 /// Probe the loopback interface for a listening `frida-server`. Never leaves the device. Default: `YES`.

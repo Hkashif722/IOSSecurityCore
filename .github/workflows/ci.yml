@@ -26,6 +26,13 @@ jobs:
       - name: swift test
         run: swift test
 
+      # The self-integrity checks read compiled code; optimised code must verify clean too.
+      - name: swift test (release)
+        run: swift test -c release
+
+      - name: swift test (AddressSanitizer)
+        run: swift test --sanitize=address
+
       # Release build for generic iOS; fails on required-reason APIs or plain-text indicators.
       - name: Privacy / plain-text audit
         run: Scripts/audit-symbols.sh
@@ -58,6 +65,18 @@ jobs:
             -resultBundlePath TestResults.xcresult \
             | tee xcodebuild.log | grep -E "Test Suite|Executed|error:|failed|\*\* TEST"
 
+      # Release configuration, so the optimiser's output is checked on iOS too. Testability lets the Swift
+      # tests keep their `@testable import` without turning optimisation off.
+      - name: xcodebuild test (Release)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme IOSSecurityCore-Package \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -configuration Release ENABLE_TESTABILITY=YES \
+            -resultBundlePath TestResults-Release.xcresult \
+            | tee xcodebuild-release.log | grep -E "Test Suite|Executed|error:|failed|\*\* TEST"
+
       - name: Upload results
         if: failure()
         uses: actions/upload-artifact@v4
@@ -65,4 +84,6 @@ jobs:
           name: ios-simulator-results
           path: |
             TestResults.xcresult
+            TestResults-Release.xcresult
             xcodebuild.log
+            xcodebuild-release.log

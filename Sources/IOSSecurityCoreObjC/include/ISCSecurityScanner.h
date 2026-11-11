@@ -41,6 +41,9 @@ ISC_RN_SECURITY_SCANNER
 /// Runs the scan on the calling thread and blocks until it finishes. Typically a few milliseconds,
 /// plus up to ~150 ms per loopback port probe (three by default) when a port is filtered.
 /// **Never call this on the main thread.**
+///
+/// The same as `ISCPerformScan(scanner.options)`, which no swizzle can redirect; prefer that from code
+/// that has no other reason to hold a scanner.
 - (ISCScanResult *)scan;
 
 /// Runs the scan on `queue` and calls `completion` there. Returns immediately.
@@ -48,5 +51,12 @@ ISC_RN_SECURITY_SCANNER
          completion:(void (^)(ISCScanResult *result))completion;
 
 @end
+
+/// Runs the detectors selected in `options` on the calling thread and returns the result: what
+/// `-[ISCSecurityScanner scan]` does, as a plain C function. Every detector, and every finding, is reached
+/// through C functions from here, so swizzling an Objective-C method cannot redirect or empty the scan.
+///
+/// Do not mutate `options` while the scan runs. **Never call this on the main thread.**
+ISCScanResult *ISCPerformScan(ISCScanOptions *options) ISC_SN_PERFORM_SCAN;
 
 NS_ASSUME_NONNULL_END

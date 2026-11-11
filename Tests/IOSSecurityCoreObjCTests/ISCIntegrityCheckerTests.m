@@ -9,6 +9,7 @@
 #import <XCTest/XCTest.h>
 #import "ISCTestSupport.h"
 
+#import <objc/runtime.h>
 #include <dlfcn.h>
 
 /// The file name of the image these tests are linked into (the test bundle's executable).
@@ -53,6 +54,33 @@ static NSString *ISCTestImageName(void) {
     XCTAssertEqualObjects([ISCIntegrityChecker teamIdentifierFromEntitlements:parsed], @"ABCDE12345");
 }
 
+- (void)testParsesTheDERExactlyAsAppleSigningEmitsIt {
+    // Byte for byte the DER slot of a real development signature (Xcode 26, iOS 27 device), with the Team ID
+    // and bundle identifier swapped for placeholders of the same length. Dictionaries are tagged [16] (0xB0).
+    const char *hex =
+        "70818902010" "1b081833039" "0c166170706c69636174696f6e2d6964656e746966696572"
+        "0c1f" "4142434445313233343" "52e636f6d2e6578616d706c652e61707070726f6265"
+        "30310c23636f6d2e6170706c652e646576656c6f7065722e7465616d2d6964656e746966696572"
+        "0c0a" "41424344453132333435"
+        "30130c0e6765742d7461736b2d616c6c6f770101ff";
+    NSMutableData *payload = [NSMutableData data];
+    for (size_t index = 0; hex[index] != '\0' && hex[index + 1] != '\0'; index += 2) {
+        char pair[3] = {hex[index], hex[index + 1], 0};
+        uint8_t byte = (uint8_t)strtoul(pair, NULL, 16);
+        [payload appendBytes:&byte length:1];
+    }
+    XCTAssertEqual(payload.length, 140u, @"the real payload is 140 bytes");
+
+    NSDictionary *expected = @{
+        @"application-identifier": @"ABCDE12345.com.example.appprobe",
+        @"com.apple.developer.team-identifier": @"ABCDE12345",
+        @"get-task-allow": @YES,
+    };
+    NSDictionary *parsed = [ISCIntegrityChecker entitlementsFromCodeSignatureData:ISCMakeSignatureBlobWithPayloads(nil, payload)];
+    XCTAssertEqualObjects(parsed, expected);
+    XCTAssertEqualObjects([ISCIntegrityChecker teamIdentifierFromEntitlements:parsed], @"ABCDE12345");
+}
+
 - (void)testXMLEntitlementsTakePrecedenceWhenBothSlotsAreReadable {
     NSData *blob = ISCMakeSignatureBlobWithSlots(@{@"source": @"xml"}, @{@"source": @"der"});
     XCTAssertEqualObjects([ISCIntegrityChecker entitlementsFromCodeSignatureData:blob][@"source"], @"xml");
@@ -76,6 +104,47 @@ static NSString *ISCTestImageName(void) {
     uint8_t set[] = {0x31, 0x08, 0x30, 0x06, 0x0C, 0x01, 'k', 0x13, 0x01, 'v'};
     NSData *blob = ISCMakeSignatureBlobWithPayloads(nil, [NSData dataWithBytes:set length:sizeof(set)]);
     XCTAssertEqualObjects([ISCIntegrityChecker entitlementsFromCodeSignatureData:blob], @{@"k": NSNull.null});
+}
+
+- (void)testDERDatesComeBackAsDatesLikeTheXMLSlot {
+    NSDictionary *entitlements = @{@"com.example.expiry": [NSDate dateWithTimeIntervalSince1970:1800000000],
+                                   @"application-identifier": @"ABCDE12345.com.example.app"};
+    NSDictionary *fromDER = [ISCIntegrityChecker entitlementsFromCodeSignatureData:ISCMakeSignatureBlobWithSlots(nil, entitlements)];
+    NSDictionary *fromXML = [ISCIntegrityChecker entitlementsFromCodeSignatureData:ISCMakeSignatureBlobWithSlots(entitlements, nil)];
+    XCTAssertEqualObjects(fromDER, entitlements);
+    XCTAssertEqualObjects(fromDER, fromXML, "the type of a value must not depend on which slot was read");
+}
+
+- (void)testDERDatesWithFractionsParseAndMalformedDatesBecomeNull {
+    // "20270115083000.5Z" (2027-01-15 08:30:00.5 UTC), and "202701Z", far too short to be a date.
+    uint8_t set[] = {0x31, 0x26,
+                     0x30, 0x16, 0x0C, 0x01, 'f', 0x18, 0x11,
+                     '2', '0', '2', '7', '0', '1', '1', '5', '0', '8', '3', '0', '0', '0', '.', '5', 'Z',
+                     0x30, 0x0C, 0x0C, 0x01, 'm', 0x18, 0x07, '2', '0', '2', '7', '0', '1', 'Z'};
+    NSDictionary *parsed = [ISCIntegrityChecker entitlementsFromCodeSignatureData:
+                                ISCMakeSignatureBlobWithPayloads(nil, [NSData dataWithBytes:set length:sizeof(set)])];
+    XCTAssertEqualWithAccuracy([parsed[@"f"] timeIntervalSince1970], 1800001800.5, 0.001);
+    XCTAssertEqualObjects(parsed[@"m"], NSNull.null, @"an unparseable date keeps its key and loses only its value");
+}
+
+- (void)testWideDERIntegersDoNotHideTheOtherEntitlements {
+    // "u": 2^64 - 1 as DER encodes it (nine bytes, leading zero). "w": a ten-byte integer. "a": a string.
+    uint8_t set[] = {0x31, 0x2B,
+                     0x30, 0x0E, 0x0C, 0x01, 'u', 0x02, 0x09, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                     0x30, 0x0F, 0x0C, 0x01, 'w', 0x02, 0x0A, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0x30, 0x08, 0x0C, 0x01, 'a', 0x0C, 0x03, 'T', 'I', 'D'};
+    NSDictionary *parsed = [ISCIntegrityChecker entitlementsFromCodeSignatureData:
+                                ISCMakeSignatureBlobWithPayloads(nil, [NSData dataWithBytes:set length:sizeof(set)])];
+    XCTAssertEqualObjects(parsed[@"u"], @(UINT64_MAX));
+    XCTAssertEqualObjects(parsed[@"w"], NSNull.null);
+    XCTAssertEqualObjects(parsed[@"a"], @"TID");
+}
+
+- (void)testAnEmptyDERIntegerIsMalformed {
+    uint8_t set[] = {0x31, 0x07, 0x30, 0x05, 0x0C, 0x01, 'k', 0x02, 0x00};
+    XCTAssertNil([ISCIntegrityChecker entitlementsFromCodeSignatureData:
+                      ISCMakeSignatureBlobWithPayloads(nil, [NSData dataWithBytes:set length:sizeof(set)])],
+                 @"X.690 requires at least one content octet");
 }
 
 - (void)testStructurallyBrokenDERIsRejected {
@@ -394,6 +463,30 @@ static NSString *ISCTestImageName(void) {
         XCTAssertFalse(ISCContainsCode([ISCIntegrityChecker scanWithOptions:options],
                                        ISCFindingCodeIntegrityUnexpectedProvisioningProfile));
     }
+}
+
+- (void)testTheScanDoesNotAskSwizzlableAccessorsForItsSignals {
+    // A bypass tweak swizzles the public accessor to claim a provisioning profile is (or is not) there. The
+    // scan reads the bundle itself, so its answer must not follow the swizzle.
+    Method method = class_getClassMethod(ISCIntegrityChecker.class, @selector(hasEmbeddedProvisioningProfile));
+    XCTAssertTrue(method != NULL);
+    BOOL actual = ISCIntegrityChecker.hasEmbeddedProvisioningProfile;
+    IMP original = method_getImplementation(method);
+    IMP lie = imp_implementationWithBlock(^BOOL(id _self) { return !actual; });
+    method_setImplementation(method, lie);
+    [self addTeardownBlock:^{
+        method_setImplementation(method, original);
+        imp_removeBlock(lie);
+    }];
+
+    ISCScanOptions *options = ISCTestOptions();
+    options.expectedDistribution = ISCDistributionAppStore;
+    XCTAssertEqual(ISCContainsCode([ISCIntegrityChecker scanWithOptions:options],
+                                   ISCFindingCodeIntegrityUnexpectedProvisioningProfile), actual);
+
+    // The swizzle itself is what self-integrity reports.
+    ISCFinding *tampered = ISCFindingWithCode([ISCHookDetector scanWithOptions:ISCTestOptions()], ISCFindingCodeHookSelfIntegrity);
+    XCTAssertTrue([tampered.detail containsString:@"hasEmbeddedProvisioningProfile"], @"%@", tampered.detail);
 }
 
 - (void)testDistributionChecksAreOffByDefault {

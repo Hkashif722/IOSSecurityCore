@@ -7,6 +7,7 @@
 //
 
 #import "ISCInstrumentationProbe.h"
+#import "ISCFindingSupport.h"
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
 
@@ -142,8 +143,7 @@ NSArray<ISCFinding *> *ISCInstrumentationFindings(NSArray<NSString *> *loadedIma
     [libraryNeedles addObjectsFromArray:options.additionalSuspiciousLibraries];
     NSArray<NSString *> *instrumentation = ISCStringsContainingAny(loadedImages, libraryNeedles);
     if (instrumentation.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeHookInstrumentationLibrary
-                                                      detail:ISCSummarizeValues(instrumentation, ISCDetailLimit)]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeHookInstrumentationLibrary, ISCSummarizeValues(instrumentation, ISCDetailLimit))];
     }
 
     if (!options.includesBuiltInIndicators) {
@@ -158,21 +158,17 @@ NSArray<ISCFinding *> *ISCInstrumentationFindings(NSArray<NSString *> *loadedIma
         }
     }
     if (artifacts.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeHookInstrumentationArtifact
-                                                      detail:ISCSummarizeValues(artifacts, ISCDetailLimit)]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeHookInstrumentationArtifact, ISCSummarizeValues(artifacts, ISCDetailLimit))];
     }
     if (options.probesInstrumentationPorts &&
         ISCLoopbackPortIsOpen(ISCInstrumentationPort, ISCPortProbeTimeoutMilliseconds)) {
-        [findings addObject:[[ISCFinding alloc]
-            initWithCode:ISCFindingCodeHookInstrumentationPort
-                  detail:[NSString stringWithFormat:@"%u", (unsigned)ISCInstrumentationPort]]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeHookInstrumentationPort, [NSString stringWithFormat:@"%u", (unsigned)ISCInstrumentationPort])];
     }
 
     // 3. Threads started by an injected instrumentation agent.
     NSArray<NSString *> *suspiciousThreads = ISCSuspiciousThreadNames(ISCCopyThreadNames());
     if (suspiciousThreads.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeHookInstrumentationThread
-                                                      detail:ISCSummarizeValues(suspiciousThreads, ISCDetailLimit)]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeHookInstrumentationThread, ISCSummarizeValues(suspiciousThreads, ISCDetailLimit))];
     }
 
     return findings;

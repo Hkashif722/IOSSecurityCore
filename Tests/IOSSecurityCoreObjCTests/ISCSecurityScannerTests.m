@@ -9,6 +9,7 @@
 #import <XCTest/XCTest.h>
 #import "ISCTestSupport.h"
 
+#import <objc/runtime.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
 
@@ -40,6 +41,75 @@ static const void *ISCQueueKey = &ISCQueueKey;
     if (ISCEnvironment.isSimulator) {
         XCTAssertEqual(result.findings.firstObject.code, ISCFindingCodeSimulator);
     }
+}
+
+- (void)testSwizzlingThePlatformGateDoesNotChangeWhetherAScanRuns {
+    // The gate is plain C. Claiming "not a device" on a device would otherwise skip every check; here,
+    // off a device, the swizzle claims the opposite, and the scan must still be skipped.
+    if (ISCEnvironment.isSupportedDevicePlatform) {
+        XCTSkip(@"On a device the scan runs anyway; the inverse swizzle is covered by self-integrity.");
+    }
+    Method method = class_getClassMethod(ISCEnvironment.class, @selector(isSupportedDevicePlatform));
+    IMP original = method_getImplementation(method);
+    IMP lie = imp_implementationWithBlock(^BOOL(id _self) { return YES; });
+    method_setImplementation(method, lie);
+    [self addTeardownBlock:^{
+        method_setImplementation(method, original);
+        imp_removeBlock(lie);
+    }];
+
+    ISCScanResult *result = [[[ISCSecurityScanner alloc] initWithOptions:[ISCScanOptions defaultOptions]] scan];
+    XCTAssertEqual(result.performedChecks, (ISCChecks)0);
+}
+
+- (void)testTheCEntryPointMatchesTheMethod {
+    ISCScanOptions *options = ISCTestOptions();
+    options.additionalSuspiciousPaths = @[NSTemporaryDirectory()];
+    options.additionalSuspiciousLibraries = @[@"Foundation"];
+    NSArray *viaMethod = [[[[ISCSecurityScanner alloc] initWithOptions:options] scan].findings valueForKey:@"code"];
+    NSArray *viaFunction = [ISCPerformScan(options).findings valueForKey:@"code"];
+    XCTAssertEqualObjects(viaFunction, viaMethod);
+}
+
+- (void)testSwizzlingADetectorEntryPointDoesNotEmptyTheScan {
+    // A tweak replaces the hooking detector's entry point with one that finds nothing. The scanner calls
+    // the C function behind it, so the planted library is still found, and the swizzle is reported.
+    Method method = class_getClassMethod(ISCHookDetector.class, @selector(scanWithOptions:));
+    IMP original = method_getImplementation(method);
+    IMP nothing = imp_implementationWithBlock(^NSArray *(id _self, ISCScanOptions *_options) { return @[]; });
+    method_setImplementation(method, nothing);
+    [self addTeardownBlock:^{
+        method_setImplementation(method, original);
+        imp_removeBlock(nothing);
+    }];
+
+    ISCScanOptions *options = ISCTestOptions();
+    options.checks = ISCChecksHooking;
+    options.additionalSuspiciousLibraries = @[@"Foundation"];
+    ISCScanResult *result = ISCPerformScan(options);
+    XCTAssertTrue(ISCContainsCode(result.findings, ISCFindingCodeHookInstrumentationLibrary));
+    ISCFinding *tampered = ISCFindingWithCode(result.findings, ISCFindingCodeHookSelfIntegrity);
+    XCTAssertTrue([tampered.detail containsString:@"scanWithOptions:"], @"%@", tampered.detail);
+}
+
+- (void)testSwizzlingTheFindingInitializerDoesNotDropFindings {
+    // The initializer swizzled to return nil would have silenced every finding, including this one.
+    Method method = class_getInstanceMethod(ISCFinding.class, @selector(initWithCode:detail:));
+    IMP original = method_getImplementation(method);
+    IMP nothing = imp_implementationWithBlock(^id(id _self, ISCFindingCode _code, NSString *_detail) { return nil; });
+    method_setImplementation(method, nothing);
+    [self addTeardownBlock:^{
+        method_setImplementation(method, original);
+        imp_removeBlock(nothing);
+    }];
+
+    ISCScanOptions *options = ISCTestOptions();
+    options.checks = ISCChecksJailbreak | ISCChecksHooking;
+    options.additionalSuspiciousPaths = @[NSTemporaryDirectory()];
+    ISCScanResult *result = ISCPerformScan(options);
+    XCTAssertTrue(ISCContainsCode(result.findings, ISCFindingCodeJailbreakArtifact));
+    ISCFinding *tampered = ISCFindingWithCode(result.findings, ISCFindingCodeHookSelfIntegrity);
+    XCTAssertTrue([tampered.detail containsString:@"initWithCode:detail:"], @"%@", tampered.detail);
 }
 
 - (void)testScansUnsupportedEnvironmentsWhenForced {

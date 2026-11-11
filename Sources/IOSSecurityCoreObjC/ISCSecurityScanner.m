@@ -7,17 +7,18 @@
 //
 
 #import "ISCSecurityScanner.h"
+#import "ISCFindingSupport.h"
 #import "ISCDetector.h"
-#import "ISCEnvironment.h"
+#import "ISCPlatform.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 
 /// Why a scan was skipped, as the single informational finding the result carries.
 static ISCFindingCode ISCSkipReason(void) {
-    if (ISCEnvironment.isSimulator) {
+    if (ISCPlatformIsSimulator()) {
         return ISCFindingCodeSimulator;
     }
-    if (ISCEnvironment.isMacCatalystApp || ISCEnvironment.isiOSAppOnMac) {
+    if (ISCPlatformIsMacCatalyst() || ISCPlatformIsiOSAppOnMac()) {
         return ISCFindingCodeMacRuntime;
     }
     return ISCFindingCodeUnsupportedPlatform;
@@ -34,13 +35,12 @@ static ISCFindingCode ISCSkipReason(void) {
     return self;
 }
 
-- (ISCScanResult *)scan {
+ISCScanResult *ISCPerformScan(ISCScanOptions *options) {
     NSDate *startedAt = [NSDate date];
     CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
-    ISCScanOptions *options = self.options;
 
-    if (!options.scansUnsupportedEnvironments && !ISCEnvironment.isSupportedDevicePlatform) {
-        ISCFinding *reason = [[ISCFinding alloc] initWithCode:ISCSkipReason() detail:nil];
+    if (!options.scansUnsupportedEnvironments && !ISCPlatformIsSupportedDevice()) {
+        ISCFinding *reason = ISCMakeFinding(ISCSkipReason(), nil);
         return [[ISCScanResult alloc] initWithFindings:@[reason]
                                        performedChecks:0
                                              startedAt:startedAt
@@ -50,12 +50,14 @@ static ISCFindingCode ISCSkipReason(void) {
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
     ISCChecks performed = 0;
 
-    for (Class<ISCDetector> detector in ISCDetectorClasses()) {
-        if (!ISCDetectorIsEnabled(detector, options)) {
+    size_t count = 0;
+    const ISCDetectorEntry *entries = ISCDetectorEntries(&count);
+    for (size_t index = 0; index < count; index++) {
+        if (!ISCChecksInclude(options, entries[index].check)) {
             continue;
         }
-        [findings addObjectsFromArray:[detector scanWithOptions:options]];
-        performed |= [detector check];
+        [findings addObjectsFromArray:entries[index].scan(options)];
+        performed |= entries[index].check;
     }
 
     // Most severe first; equal severities keep a stable order by code.
@@ -73,6 +75,10 @@ static ISCFindingCode ISCSkipReason(void) {
                                    performedChecks:performed
                                          startedAt:startedAt
                                           duration:CFAbsoluteTimeGetCurrent() - started];
+}
+
+- (ISCScanResult *)scan {
+    return ISCPerformScan(self.options);
 }
 
 - (void)scanOnQueue:(dispatch_queue_t)queue completion:(void (^)(ISCScanResult *))completion {

@@ -120,6 +120,26 @@ static void ISCWriteLiteralTrampoline(uint32_t *code, const void *target) {
                    @"%@", ISCFindingWithCode(findings, ISCFindingCodeHookReboundSymbol));
 }
 
+- (void)testListingBundleLibrariesKeepsTheSystemFunctionCheckClean {
+    // With a list, only listed bundle images may stand in for a system function. A clean process binds
+    // every one of them to the OS, so narrowing the trust must not produce a finding.
+    for (NSString *image in ISCHookDetector.loadedImagePaths) {
+        if ([image containsString:@"libclang_rt."]) {
+            // A sanitizer interposes readlink, sysctl and friends: a real rebinding, correctly reported.
+            XCTSkip(@"A sanitizer runtime is loaded (%@).", image.lastPathComponent);
+        }
+    }
+    ISCScanOptions *options = ISCTestOptions();
+    options.includesBuiltInIndicators = YES;
+    options.allowedBundleLibraries = @[@"NothingWeShip.framework/NothingWeShip"];
+    NSArray<ISCFinding *> *findings = [ISCHookDetector scanWithOptions:options];
+    XCTAssertFalse(ISCContainsCode(findings, ISCFindingCodeHookReboundSymbol),
+                   @"%@", ISCFindingWithCode(findings, ISCFindingCodeHookReboundSymbol));
+    XCTAssertFalse(ISCContainsCode(findings, ISCFindingCodeHookInlinePatchedFunction),
+                   @"%@", ISCFindingWithCode(findings, ISCFindingCodeHookInlinePatchedFunction));
+    XCTAssertFalse(ISCContainsCode(findings, ISCFindingCodeHookSelfIntegrity));
+}
+
 // MARK: - Inline hooks
 
 - (void)testRealSystemFunctionsAreNotInlineHooked {

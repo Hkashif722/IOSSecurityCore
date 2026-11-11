@@ -9,6 +9,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "ISCVisibility.h"
 #import <objc/runtime.h>
 #import "ISCFinding.h"
 #import "ISCScanOptions.h"
@@ -16,33 +17,39 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// One detector family (jailbreak, debugger, ...). Detectors are stateless; every method is a class method.
+
+/// A detector family's scan: the checks of that family enabled in `options`, and what they found. Each
+/// one checks `options.checks` itself, so it returns nothing when its family is excluded.
 ///
-/// `ISCSecurityScanner` runs the detectors in `ISCDetectorClasses()` and only those whose `check` bit is
-/// set in `ISCScanOptions.checks`. A detector also applies that test itself, so calling it directly with
-/// options that exclude its family returns no findings.
-@protocol ISCDetector <NSObject>
+/// The scanner calls these C functions, never the `+scanWithOptions:` methods that wrap them, so a
+/// swizzled method cannot change what a scan finds.
+typedef NSArray<ISCFinding *> *_Nonnull (*ISCDetectorScanFunction)(ISCScanOptions *options);
 
-/// The single `ISCChecks` bit this detector implements.
-@property (class, nonatomic, readonly) ISCChecks check;
+ISC_HIDDEN NSArray<ISCFinding *> *ISCJailbreakScan(ISCScanOptions *options);
+ISC_HIDDEN NSArray<ISCFinding *> *ISCDebuggerScan(ISCScanOptions *options);
+ISC_HIDDEN NSArray<ISCFinding *> *ISCHookingScan(ISCScanOptions *options);
+ISC_HIDDEN NSArray<ISCFinding *> *ISCIntegrityScan(ISCScanOptions *options);
+ISC_HIDDEN NSArray<ISCFinding *> *ISCNetworkScan(ISCScanOptions *options);
 
-/// Runs the family's checks enabled in `options` and returns what they found.
-+ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options;
-
-@end
-
-/// `YES` when `options.checks` includes `detector`'s family.
-static inline BOOL ISCDetectorIsEnabled(Class<ISCDetector> detector, ISCScanOptions *options) {
-    return (options.checks & [detector check]) != 0;
+/// `YES` when `options.checks` includes `check`.
+static inline BOOL ISCChecksInclude(ISCScanOptions *options, ISCChecks check) {
+    return (options.checks & check) != 0;
 }
 
 // MARK: - Registry
 //
-// Both functions are defined in ISCDetectorRegistry.m, the one file that knows every detector and the
-// scanner. Detectors depend on this header only, never on each other or on the scanner.
+// Defined in ISCDetectorRegistry.m, the one file that knows every detector and the scanner. Detectors
+// depend on this header only, never on each other or on the scanner.
 
-/// Every detector the scanner runs, in scan order. Adding a family means adding it there and nowhere else.
-NSArray<Class<ISCDetector>> *ISCDetectorClasses(void);
+/// A detector family: its bit and its scan function. Both are data, so no method stands between the
+/// scanner and the checks.
+typedef struct {
+    ISCChecks check;
+    ISCDetectorScanFunction scan;
+} ISCDetectorEntry;
+
+/// Every detector the scanner runs, in scan order. `outCount` receives how many. The storage is static.
+ISC_HIDDEN const ISCDetectorEntry *ISCDetectorEntries(size_t *outCount);
 
 /// A method whose implementation must stay inside this package's image.
 typedef struct {
@@ -51,8 +58,13 @@ typedef struct {
     BOOL isClassMethod;
 } ISCMethodTarget;
 
-/// The methods the self-integrity check watches: every registered detector's entry point, the scanner's
-/// `scan`, and the finding initializer. `outCount` receives how many. The storage is static.
-const ISCMethodTarget *ISCSelfIntegrityTargets(size_t *outCount);
+/// The methods the self-integrity check watches, as boxed `ISCMethodTarget` values: every public method,
+/// since hosts and `IntegritySignals` call them directly, plus the getters a report is read through.
+ISC_HIDDEN NSArray<NSValue *> *ISCSelfIntegrityTargets(void);
+
+/// Calls `visit` with a readable name and the address of each C function a scan runs through: the scan
+/// entry point, every detector, the probes and the finding factory. Self-integrity checks each for an
+/// inline patch. The names are decoded on each call and only for this use.
+ISC_HIDDEN void ISCForEachSelfIntegrityFunction(void (NS_NOESCAPE ^visit)(NSString *name, const void *function));
 
 NS_ASSUME_NONNULL_END

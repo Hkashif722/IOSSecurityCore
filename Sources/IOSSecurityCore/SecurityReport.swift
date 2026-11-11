@@ -34,16 +34,52 @@ public struct SecurityReport: Hashable, Sendable, Codable {
     /// How long the evaluation took, in seconds.
     public let duration: TimeInterval
 
+    /// Why the evaluation was skipped, or `nil` when the checks ran. A skipped report says nothing about
+    /// the device; its only threat is the informational one that names the platform. Stored with the
+    /// report, so it survives a host filtering ``threats`` or a server re-encoding without `info` entries.
+    public let skipReason: SkipReason?
+
+    /// - Parameter skipReason: Why the evaluation was skipped. When `nil`, it is read from the environment
+    ///   threat in `threats`, if there is one, so a report assembled from threats alone still knows.
     public init(
         threats: [SecurityThreat],
         performedChecks: Set<SecurityCheck>,
         startedAt: Date,
-        duration: TimeInterval
+        duration: TimeInterval,
+        skipReason: SkipReason? = nil
     ) {
         self.threats = threats
         self.performedChecks = performedChecks
         self.startedAt = startedAt
         self.duration = duration
+        self.skipReason = skipReason ?? threats.lazy.compactMap { SkipReason(kind: $0.kind) }.first
+    }
+
+    /// A report whose skip reason is exactly `skipReason`, never derived from the threats.
+    init(threats: [SecurityThreat], performedChecks: Set<SecurityCheck>, startedAt: Date, duration: TimeInterval,
+         exactSkipReason skipReason: SkipReason?) {
+        self.threats = threats
+        self.performedChecks = performedChecks
+        self.startedAt = startedAt
+        self.duration = duration
+        self.skipReason = skipReason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case threats, performedChecks, startedAt, duration, skipReason
+    }
+
+    /// Decodes a report, including one written before `skipReason` was stored: the reason is then read
+    /// from the threats, exactly as ``init(threats:performedChecks:startedAt:duration:skipReason:)`` does.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            threats: try container.decode([SecurityThreat].self, forKey: .threats),
+            performedChecks: try container.decode(Set<SecurityCheck>.self, forKey: .performedChecks),
+            startedAt: try container.decode(Date.self, forKey: .startedAt),
+            duration: try container.decode(TimeInterval.self, forKey: .duration),
+            skipReason: try container.decodeIfPresent(SkipReason.self, forKey: .skipReason)
+        )
     }
 
     // MARK: - Verdict
@@ -65,12 +101,6 @@ public struct SecurityReport: Hashable, Sendable, Codable {
     }
 
     // MARK: - Skipped evaluations
-
-    /// Why the evaluation was skipped, or `nil` when the checks ran. A skipped report says nothing about
-    /// the device; its only threat is the informational one that names the platform.
-    public var skipReason: SkipReason? {
-        threats.lazy.compactMap { SkipReason(kind: $0.kind) }.first
-    }
 
     /// `true` when the evaluation was skipped because the platform is unsupported. Requesting no check
     /// families at all is not a skip: ``performedChecks`` is empty then too, but this stays `false`.

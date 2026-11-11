@@ -54,14 +54,14 @@ extern "C" {
 ///   - length: Number of bytes in `encoded`.
 ///   - key: The key the bytes were encoded with.
 ///   - output: Buffer of at least `length + 1` bytes. A NUL terminator is always written.
-void ISCDeobfuscateBytes(const uint8_t *encoded, size_t length, uint8_t key, char *output);
+void ISCDeobfuscateBytes(const uint8_t *encoded, size_t length, uint8_t key, char *output) ISC_SN_DEOBFUSCATE_BYTES;
 
 /// Decodes `length` bytes produced by the `ISC_OBF_*` macros into an `NSString` (UTF-8).
-NSString *ISCStringFromObfuscatedBytes(const uint8_t *encoded, size_t length, uint8_t key);
+NSString *ISCStringFromObfuscatedBytes(const uint8_t *encoded, size_t length, uint8_t key) ISC_SN_STRING_FROM_BYTES;
 
 /// Overwrites `length` bytes at `buffer` with zeros in a way the optimizer cannot remove. Does nothing
 /// for a `NULL` buffer or a zero length.
-void ISCSecureZero(void *_Nullable buffer, size_t length);
+void ISCSecureZero(void *_Nullable buffer, size_t length) ISC_SN_SECURE_ZERO;
 
 // MARK: - Macro machinery (implementation detail)
 

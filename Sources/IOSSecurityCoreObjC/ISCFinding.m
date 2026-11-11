@@ -7,6 +7,7 @@
 //
 
 #import "ISCFinding.h"
+#import "ISCFindingSupport.h"
 #import "ISCObfuscation.h"
 
 // MARK: - Code table
@@ -166,15 +167,27 @@ static NSString *ISCIdentifierForCode(ISCFindingCode code) {
 
 @implementation ISCFinding
 
+/// Fills in every field from `code`. Defined inside the implementation so it can set the ivars directly.
+static void ISCFindingFill(ISCFinding *finding, ISCFindingCode code, NSString *detail) {
+    ISCCodeTraits traits = ISCTraitsForCode(code);
+    finding->_code = code;
+    finding->_category = traits.category;
+    finding->_severity = traits.severity;
+    finding->_identifier = [ISCIdentifierForCode(code) copy];
+    finding->_detail = [detail copy];
+}
+
+ISCFinding *ISCMakeFinding(ISCFindingCode code, NSString *detail) {
+    // NSObject's -init does nothing, so skipping it (and any swizzle on it) loses nothing.
+    ISCFinding *finding = [ISCFinding alloc];
+    ISCFindingFill(finding, code, detail);
+    return finding;
+}
+
 - (instancetype)initWithCode:(ISCFindingCode)code detail:(NSString *)detail {
     self = [super init];
     if (self != nil) {
-        ISCCodeTraits traits = ISCTraitsForCode(code);
-        _code = code;
-        _category = traits.category;
-        _severity = traits.severity;
-        _identifier = [ISCIdentifierForCode(code) copy];
-        _detail = [detail copy];
+        ISCFindingFill(self, code, detail);
     }
     return self;
 }

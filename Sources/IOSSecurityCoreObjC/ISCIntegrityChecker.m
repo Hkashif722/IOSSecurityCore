@@ -7,6 +7,7 @@
 //
 
 #import "ISCIntegrityChecker.h"
+#import "ISCFindingSupport.h"
 #import "ISCDEREntitlements.h"
 #import "ISCDetector.h"
 #import "ISCObfuscation.h"
@@ -225,28 +226,9 @@ static NSString *ISCEmbeddedProvisioningProfilePath(void) {
     return [NSBundle.mainBundle pathForResource:@"embedded" ofType:@"mobileprovision"];
 }
 
-// MARK: - ISCIntegrityChecker
-
-@interface ISCIntegrityChecker () <ISCDetector>
-@end
-
-@implementation ISCIntegrityChecker
-
-+ (ISCChecks)check {
-    return ISCChecksIntegrity;
-}
-
-// MARK: Raw signals
-
-+ (NSDictionary<NSString *, id> *)codeSigningEntitlements {
-    return ISCMainExecutableEntitlements();
-}
-
-+ (NSString *)codeSigningTeamIdentifier {
-    return [self teamIdentifierFromEntitlements:ISCMainExecutableEntitlements()];
-}
-
-+ (NSString *)teamIdentifierFromEntitlements:(NSDictionary<NSString *, id> *)entitlements {
+/// The Team ID an entitlements dictionary names: `com.apple.developer.team-identifier`, or the part of
+/// `application-identifier` before the first dot.
+static NSString *ISCTeamIdentifierFromEntitlements(NSDictionary<NSString *, id> *entitlements) {
     id team = entitlements[@"com.apple.developer.team-identifier"];
     if ([team isKindOfClass:NSString.class] && [team length] > 0) {
         return team;
@@ -262,7 +244,8 @@ static NSString *ISCEmbeddedProvisioningProfilePath(void) {
     return nil;
 }
 
-+ (ISCEncryptionState)binaryEncryptionState {
+/// Whether the main executable's code is FairPlay-encrypted (`cryptid` in `LC_ENCRYPTION_INFO_64`).
+static ISCEncryptionState ISCMainBinaryEncryptionState(void) {
     ISCMainImage image;
     if (!ISCLocateMainImage(&image)) {
         return ISCEncryptionStateUnknown;
@@ -275,6 +258,37 @@ static NSString *ISCEmbeddedProvisioningProfilePath(void) {
         }
     });
     return state;
+}
+
+/// Lowercase hex SHA-256 of the main executable's `__TEXT,__text`, or nil.
+static NSString *ISCMainTextDigest(void) {
+    ISCMainImage image;
+    if (!ISCLocateMainImage(&image)) {
+        return nil;
+    }
+    return ISCTextDigestOfImage(image.header);
+}
+
+// MARK: - ISCIntegrityChecker
+
+@implementation ISCIntegrityChecker
+
+// MARK: Raw signals
+
++ (NSDictionary<NSString *, id> *)codeSigningEntitlements {
+    return ISCMainExecutableEntitlements();
+}
+
++ (NSString *)codeSigningTeamIdentifier {
+    return ISCTeamIdentifierFromEntitlements(ISCMainExecutableEntitlements());
+}
+
++ (NSString *)teamIdentifierFromEntitlements:(NSDictionary<NSString *, id> *)entitlements {
+    return ISCTeamIdentifierFromEntitlements(entitlements);
+}
+
++ (ISCEncryptionState)binaryEncryptionState {
+    return ISCMainBinaryEncryptionState();
 }
 
 + (BOOL)hasEmbeddedProvisioningProfile {
@@ -310,11 +324,7 @@ static NSString *ISCEmbeddedProvisioningProfilePath(void) {
 }
 
 + (NSString *)textSegmentDigest {
-    ISCMainImage image;
-    if (!ISCLocateMainImage(&image)) {
-        return nil;
-    }
-    return ISCTextDigestOfImage(image.header);
+    return ISCMainTextDigest();
 }
 
 + (NSString *)textSegmentDigestOfImageNamed:(NSString *)name {
@@ -381,8 +391,8 @@ static BOOL ISCLocateBlobPayload(const uint8_t *bytes, uint64_t superLength, uin
 
 // MARK: Scan
 
-+ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
-    if (!ISCDetectorIsEnabled(self, options)) {
+NSArray<ISCFinding *> *ISCIntegrityScan(ISCScanOptions *options) {
+    if (!ISCChecksInclude(options, ISCChecksIntegrity)) {
         return @[];
     }
     NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
@@ -392,52 +402,43 @@ static BOOL ISCLocateBlobPayload(const uint8_t *bytes, uint64_t superLength, uin
     if (expectedBundleIdentifier.length > 0) {
         NSString *actual = NSBundle.mainBundle.bundleIdentifier;
         if (![actual isEqualToString:expectedBundleIdentifier]) {
-            [findings addObject:[[ISCFinding alloc]
-                initWithCode:ISCFindingCodeIntegrityBundleIdentifierMismatch
-                      detail:[NSString stringWithFormat:@"expected %@, found %@",
-                              expectedBundleIdentifier, actual != nil ? actual : @"none"]]];
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityBundleIdentifierMismatch, [NSString stringWithFormat:@"expected %@, found %@", expectedBundleIdentifier, actual != nil ? actual : @"none"])];
         }
     }
 
     // 2. Team ID from the code signature: a re-signer cannot reuse yours.
     NSString *expectedTeamIdentifier = options.expectedTeamIdentifier;
     if (expectedTeamIdentifier.length > 0) {
-        NSString *actual = self.codeSigningTeamIdentifier;
+        NSString *actual = ISCTeamIdentifierFromEntitlements(ISCMainExecutableEntitlements());
         if (actual == nil) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTeamIdentifierUnavailable
-                                                          detail:nil]];
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityTeamIdentifierUnavailable, nil)];
         } else if ([actual caseInsensitiveCompare:expectedTeamIdentifier] != NSOrderedSame) {
-            [findings addObject:[[ISCFinding alloc]
-                initWithCode:ISCFindingCodeIntegrityTeamIdentifierMismatch
-                      detail:[NSString stringWithFormat:@"expected %@, found %@", expectedTeamIdentifier, actual]]];
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityTeamIdentifierMismatch, [NSString stringWithFormat:@"expected %@, found %@", expectedTeamIdentifier, actual])];
         }
     }
 
     // 3. App Store and TestFlight builds look a specific way; copies that were re-signed or dumped do not.
     if (options.expectedDistribution == ISCDistributionAppStore) {
         // Presence is the signal. A profile that fails to parse is still a profile App Store builds do not have.
-        if (self.hasEmbeddedProvisioningProfile) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityUnexpectedProvisioningProfile
-                                                          detail:nil]];
+        if (ISCEmbeddedProvisioningProfilePath() != nil) {
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityUnexpectedProvisioningProfile, nil)];
         }
-        if (self.binaryEncryptionState == ISCEncryptionStateDecrypted) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityBinaryDecrypted detail:nil]];
+        if (ISCMainBinaryEncryptionState() == ISCEncryptionStateDecrypted) {
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityBinaryDecrypted, nil)];
         }
         id getTaskAllow = ISCMainExecutableEntitlements()[@"get-task-allow"];
         if ([getTaskAllow isKindOfClass:NSNumber.class] && [getTaskAllow boolValue]) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityDebuggableBuild detail:nil]];
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityDebuggableBuild, nil)];
         }
     }
 
     // 4. The code itself.
     if (options.expectedTextSegmentDigests.count > 0) {
-        NSString *digest = self.textSegmentDigest;
+        NSString *digest = ISCMainTextDigest();
         if (digest == nil) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentUnavailable
-                                                          detail:nil]];
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityTextSegmentUnavailable, nil)];
         } else if (!ISCDigestIsExpected(digest, options.expectedTextSegmentDigests)) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityTextSegmentModified
-                                                          detail:digest]];
+            [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityTextSegmentModified, digest)];
         }
     }
 
@@ -465,15 +466,17 @@ static BOOL ISCLocateBlobPayload(const uint8_t *bytes, uint64_t superLength, uin
         }
     }
     if (modified.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityImageModified
-                                                      detail:ISCSummarizeValues(modified, ISCDetailLimit)]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityImageModified, ISCSummarizeValues(modified, ISCDetailLimit))];
     }
     if (unavailable.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeIntegrityImageUnavailable
-                                                      detail:ISCSummarizeValues(unavailable, ISCDetailLimit)]];
+        [findings addObject:ISCMakeFinding(ISCFindingCodeIntegrityImageUnavailable, ISCSummarizeValues(unavailable, ISCDetailLimit))];
     }
 
     return findings;
+}
+
++ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    return ISCIntegrityScan(options);
 }
 
 @end

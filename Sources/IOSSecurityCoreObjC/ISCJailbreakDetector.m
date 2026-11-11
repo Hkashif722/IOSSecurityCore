@@ -7,6 +7,7 @@
 //
 
 #import "ISCJailbreakDetector.h"
+#import "ISCFindingSupport.h"
 #import "ISCDetector.h"
 #import "ISCObfuscation.h"
 #import "ISCRuntimeSupport.h"
@@ -291,110 +292,8 @@ static BOOL ISCForkSucceeds(void) {
     return YES;
 }
 
-// MARK: - ISCJailbreakDetector
-
-@interface ISCJailbreakDetector () <ISCDetector>
-@end
-
-@implementation ISCJailbreakDetector
-
-+ (ISCChecks)check {
-    return ISCChecksJailbreak;
-}
-
-+ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
-    if (!ISCDetectorIsEnabled(self, options)) {
-        return @[];
-    }
-    NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
-
-    // 1. Known files and directories.
-    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
-    if (options.includesBuiltInIndicators) {
-        [candidates addObjectsFromArray:ISCBuiltInArtifactPaths()];
-    }
-    [candidates addObjectsFromArray:options.additionalSuspiciousPaths];
-    NSArray<NSString *> *present = [self existingPathsAmong:candidates];
-    if (present.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakArtifact
-                                                      detail:ISCSummarizeValues(present, ISCDetailLimit)]];
-    }
-
-    // 2. System directories replaced by symbolic links.
-    if (options.includesBuiltInIndicators) {
-        NSMutableArray<NSString *> *links = [NSMutableArray array];
-        for (NSString *path in ISCBuiltInSymlinkPaths()) {
-            if (ISCPathIsSymbolicLink(ISCSafeCPath(path))) {
-                [links addObject:path];
-            }
-        }
-        if (links.count > 0) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakSymlink
-                                                          detail:ISCSummarizeValues(links, ISCDetailLimit)]];
-        }
-    }
-
-    // 3. Library injection through the environment.
-    if (options.includesBuiltInIndicators) {
-        NSString *injected = ISCFirstSuspiciousInjectedLibrary();
-        if (injected != nil) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakInjectionEnvironment
-                                                          detail:injected]];
-        }
-    }
-
-    // 4. Tweak-injection libraries that are already loaded.
-    if (options.includesBuiltInIndicators) {
-        NSArray<NSString *> *loaded = ISCStringsContainingAny(ISCCopyLoadedImagePaths(), ISCBuiltInInjectionLibraries());
-        if (loaded.count > 0) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakInjectedLibrary
-                                                          detail:ISCSummarizeValues(loaded, ISCDetailLimit)]];
-        }
-    }
-
-    // 5. Sandbox escape.
-    if (options.performsSandboxWriteProbe && ISCSandboxWriteSucceeds()) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakSandboxEscape detail:nil]];
-    }
-
-    // 6. Weakened sandbox.
-    if (options.performsForkProbe && ISCForkSucceeds()) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakForkAllowed detail:nil]];
-    }
-
-    // 7. A remote shell listening on loopback.
-    if (options.includesBuiltInIndicators && options.probesRemoteShellPorts) {
-        NSMutableArray<NSString *> *open = [NSMutableArray array];
-        for (size_t index = 0; index < sizeof(ISCRemoteShellPorts) / sizeof(ISCRemoteShellPorts[0]); index++) {
-            if (ISCLoopbackPortIsOpen(ISCRemoteShellPorts[index], ISCPortProbeTimeoutMilliseconds)) {
-                [open addObject:[NSString stringWithFormat:@"%u", (unsigned)ISCRemoteShellPorts[index]]];
-            }
-        }
-        if (open.count > 0) {
-            [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakRemoteShellPort
-                                                          detail:[open componentsJoinedByString:@", "]]];
-        }
-    }
-
-    // 8. A jailbreak-detection bypass tool, by its classes and its files.
-    NSMutableArray<NSString *> *classNames = [NSMutableArray array];
-    NSMutableArray<NSString *> *bypassPaths = [NSMutableArray array];
-    if (options.includesBuiltInIndicators) {
-        [classNames addObjectsFromArray:ISCBuiltInBypassToolClasses()];
-        [bypassPaths addObjectsFromArray:ISCBuiltInBypassToolPaths()];
-    }
-    [classNames addObjectsFromArray:options.additionalSuspiciousClasses];
-    NSMutableArray<NSString *> *bypass = [NSMutableArray arrayWithArray:[self registeredClassesAmong:classNames]];
-    [bypass addObjectsFromArray:[self existingPathsAmong:bypassPaths]];
-    if (bypass.count > 0) {
-        [findings addObject:[[ISCFinding alloc] initWithCode:ISCFindingCodeJailbreakBypassTool
-                                                      detail:ISCSummarizeValues(bypass, ISCDetailLimit)]];
-    }
-
-    return findings;
-}
-
-+ (NSArray<NSString *> *)registeredClassesAmong:(NSArray<NSString *> *)classNames {
+/// The members of `classNames` registered with the Objective-C runtime. Blank or malformed names are skipped.
+static NSArray<NSString *> *ISCRegisteredClasses(NSArray<NSString *> *classNames) {
     NSMutableArray<NSString *> *registered = [NSMutableArray array];
     for (NSString *name in classNames) {
         // objc_lookUpClass, unlike objc_getClass, never calls a class handler that could load code.
@@ -406,7 +305,8 @@ static BOOL ISCForkSucceeds(void) {
     return registered;
 }
 
-+ (NSArray<NSString *> *)existingPathsAmong:(NSArray<NSString *> *)paths {
+/// The members of `paths` that exist. Blank or malformed entries are skipped.
+static NSArray<NSString *> *ISCExistingPaths(NSArray<NSString *> *paths) {
     NSMutableArray<NSString *> *existing = [NSMutableArray array];
     for (NSString *path in paths) {
         // Configuration comes from the host app, so a blank or malformed entry must be skipped, never fatal.
@@ -415,6 +315,108 @@ static BOOL ISCForkSucceeds(void) {
         }
     }
     return existing;
+}
+
+// MARK: - ISCJailbreakDetector
+
+@implementation ISCJailbreakDetector
+
+NSArray<ISCFinding *> *ISCJailbreakScan(ISCScanOptions *options) {
+    if (!ISCChecksInclude(options, ISCChecksJailbreak)) {
+        return @[];
+    }
+    NSMutableArray<ISCFinding *> *findings = [NSMutableArray array];
+
+    // 1. Known files and directories.
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    if (options.includesBuiltInIndicators) {
+        [candidates addObjectsFromArray:ISCBuiltInArtifactPaths()];
+    }
+    [candidates addObjectsFromArray:options.additionalSuspiciousPaths];
+    NSArray<NSString *> *present = ISCExistingPaths(candidates);
+    if (present.count > 0) {
+        [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakArtifact, ISCSummarizeValues(present, ISCDetailLimit))];
+    }
+
+    // 2. System directories replaced by symbolic links.
+    if (options.includesBuiltInIndicators) {
+        NSMutableArray<NSString *> *links = [NSMutableArray array];
+        for (NSString *path in ISCBuiltInSymlinkPaths()) {
+            if (ISCPathIsSymbolicLink(ISCSafeCPath(path))) {
+                [links addObject:path];
+            }
+        }
+        if (links.count > 0) {
+            [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakSymlink, ISCSummarizeValues(links, ISCDetailLimit))];
+        }
+    }
+
+    // 3. Library injection through the environment.
+    if (options.includesBuiltInIndicators) {
+        NSString *injected = ISCFirstSuspiciousInjectedLibrary();
+        if (injected != nil) {
+            [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakInjectionEnvironment, injected)];
+        }
+    }
+
+    // 4. Tweak-injection libraries that are already loaded.
+    if (options.includesBuiltInIndicators) {
+        NSArray<NSString *> *loaded = ISCStringsContainingAny(ISCCopyLoadedImagePaths(), ISCBuiltInInjectionLibraries());
+        if (loaded.count > 0) {
+            [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakInjectedLibrary, ISCSummarizeValues(loaded, ISCDetailLimit))];
+        }
+    }
+
+    // 5. Sandbox escape.
+    if (options.performsSandboxWriteProbe && ISCSandboxWriteSucceeds()) {
+        [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakSandboxEscape, nil)];
+    }
+
+    // 6. Weakened sandbox.
+    if (options.performsForkProbe && ISCForkSucceeds()) {
+        [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakForkAllowed, nil)];
+    }
+
+    // 7. A remote shell listening on loopback.
+    if (options.includesBuiltInIndicators && options.probesRemoteShellPorts) {
+        NSMutableArray<NSString *> *open = [NSMutableArray array];
+        for (size_t index = 0; index < sizeof(ISCRemoteShellPorts) / sizeof(ISCRemoteShellPorts[0]); index++) {
+            if (ISCLoopbackPortIsOpen(ISCRemoteShellPorts[index], ISCPortProbeTimeoutMilliseconds)) {
+                [open addObject:[NSString stringWithFormat:@"%u", (unsigned)ISCRemoteShellPorts[index]]];
+            }
+        }
+        if (open.count > 0) {
+            [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakRemoteShellPort, [open componentsJoinedByString:@", "])];
+        }
+    }
+
+    // 8. A jailbreak-detection bypass tool, by its classes and its files.
+    NSMutableArray<NSString *> *classNames = [NSMutableArray array];
+    NSMutableArray<NSString *> *bypassPaths = [NSMutableArray array];
+    if (options.includesBuiltInIndicators) {
+        [classNames addObjectsFromArray:ISCBuiltInBypassToolClasses()];
+        [bypassPaths addObjectsFromArray:ISCBuiltInBypassToolPaths()];
+    }
+    [classNames addObjectsFromArray:options.additionalSuspiciousClasses];
+    NSMutableArray<NSString *> *bypass = [NSMutableArray arrayWithArray:ISCRegisteredClasses(classNames)];
+    [bypass addObjectsFromArray:ISCExistingPaths(bypassPaths)];
+    if (bypass.count > 0) {
+        [findings addObject:ISCMakeFinding(ISCFindingCodeJailbreakBypassTool, ISCSummarizeValues(bypass, ISCDetailLimit))];
+    }
+
+    return findings;
+}
+
++ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    return ISCJailbreakScan(options);
+}
+
++ (NSArray<NSString *> *)registeredClassesAmong:(NSArray<NSString *> *)classNames {
+    return ISCRegisteredClasses(classNames);
+}
+
++ (NSArray<NSString *> *)existingPathsAmong:(NSArray<NSString *> *)paths {
+    return ISCExistingPaths(paths);
 }
 
 @end

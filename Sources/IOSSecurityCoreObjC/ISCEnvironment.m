@@ -7,12 +7,11 @@
 //
 
 #import "ISCEnvironment.h"
+#import "ISCPlatform.h"
 
 #import <TargetConditionals.h>
 
-@implementation ISCEnvironment
-
-+ (BOOL)isSimulator {
+BOOL ISCPlatformIsSimulator(void) {
 #if TARGET_OS_SIMULATOR
     return YES;
 #else
@@ -20,7 +19,7 @@
 #endif
 }
 
-+ (BOOL)isMacCatalystApp {
+BOOL ISCPlatformIsMacCatalyst(void) {
 #if TARGET_OS_MACCATALYST
     return YES;
 #else
@@ -28,7 +27,7 @@
 #endif
 }
 
-+ (BOOL)isiOSAppOnMac {
+BOOL ISCPlatformIsiOSAppOnMac(void) {
 #if TARGET_OS_IOS && !TARGET_OS_MACCATALYST
     return NSProcessInfo.processInfo.isiOSAppOnMac;
 #else
@@ -36,12 +35,30 @@
 #endif
 }
 
-+ (BOOL)isSupportedDevicePlatform {
+BOOL ISCPlatformIsSupportedDevice(void) {
 #if TARGET_OS_IOS && !TARGET_OS_SIMULATOR && !TARGET_OS_MACCATALYST
-    return !self.isiOSAppOnMac;
+    return !ISCPlatformIsiOSAppOnMac();
 #else
     return NO;
 #endif
+}
+
+@implementation ISCEnvironment
+
++ (BOOL)isSimulator {
+    return ISCPlatformIsSimulator();
+}
+
++ (BOOL)isMacCatalystApp {
+    return ISCPlatformIsMacCatalyst();
+}
+
++ (BOOL)isiOSAppOnMac {
+    return ISCPlatformIsiOSAppOnMac();
+}
+
++ (BOOL)isSupportedDevicePlatform {
+    return ISCPlatformIsSupportedDevice();
 }
 
 @end

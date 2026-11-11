@@ -7,28 +7,13 @@
 //
 
 #import "ISCSelfIntegrityProbe.h"
+#import "ISCFindingSupport.h"
 #import "ISCCodeTrust.h"
 #import "ISCDetector.h"
 #import "ISCRuntimeSupport.h"
-#import "ISCTrampoline.h"
 
 /// A function in this file, used to find the image this package was linked into.
 static void ISCSelfAnchor(void) {}
-
-/// `YES` when one of this package's own functions starts with a branch into code that is neither this
-/// image nor the OS. A branch that stays in this image is a tail call the compiler emitted, not a hook.
-static BOOL ISCOwnFunctionIsInlineHooked(const void *function, const void *ownBase) {
-    const void *target = NULL;
-    if (!ISCDecodeTrampoline(function, &target)) {
-        return NO;
-    }
-    const void *targetBase = NULL;
-    if (ISCImageForAddress(target, NULL, &targetBase) && targetBase == ownBase) {
-        return NO;
-    }
-    NSString *path = nil;
-    return !ISCAddressIsTrustedCode(target, @[], &path);
-}
 
 NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
     const void *anchor = (const void *)(uintptr_t)ISC_STRIP_CODE_POINTER(ISCSelfAnchor);
@@ -37,28 +22,38 @@ NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void) {
         return @[];
     }
 
-    size_t count = 0;
-    const ISCMethodTarget *targets = ISCSelfIntegrityTargets(&count);
+    // This package's code may branch into itself (a compiler tail call) or into the OS, and nowhere else.
+    // In particular not into the app bundle: a dylib injected into a repackaged app lives there.
+    ISCCodeTrust trust = ISCMakeCodeTrust(@[], ISCBundleTrustNone, @[], ownBase);
 
     NSMutableArray<NSString *> *tampered = [NSMutableArray array];
-    for (size_t index = 0; index < count; index++) {
-        Method method = ISCResolveMethod(targets[index].cls, targets[index].selector, targets[index].isClassMethod);
+    for (NSValue *value in ISCSelfIntegrityTargets()) {
+        ISCMethodTarget target;
+        [value getValue:&target size:sizeof(target)];
+
+        Method method = ISCResolveMethod(target.cls, target.selector, target.isClassMethod);
         const void *implementation = method != NULL ? ISCMethodImplementationAddress(method) : NULL;
         const void *base = NULL;
-        BOOL isOurs = implementation != NULL &&
-                      ISCImageForAddress(implementation, NULL, &base) &&
-                      base == ownBase;
-        if (!isOurs || ISCOwnFunctionIsInlineHooked(implementation, ownBase)) {
+        BOOL isOurs = implementation != NULL && ISCImageForAddress(implementation, NULL, &base) && base == ownBase;
+        NSString *destination = nil;
+        if (!isOurs || ISCFunctionIsInlineHooked(implementation, &trust, &destination)) {
             [tampered addObject:[NSString stringWithFormat:@"%c[%@ %@]",
-                                 targets[index].isClassMethod ? '+' : '-',
-                                 NSStringFromClass(targets[index].cls),
-                                 NSStringFromSelector(targets[index].selector)]];
+                                 target.isClassMethod ? '+' : '-',
+                                 NSStringFromClass(target.cls),
+                                 NSStringFromSelector(target.selector)]];
         }
     }
+
+    // The C functions a scan runs through: an inline patch can redirect them without touching any method.
+    ISCForEachSelfIntegrityFunction(^(NSString *name, const void *function) {
+        NSString *destination = nil;
+        if (ISCFunctionIsInlineHooked(function, &trust, &destination)) {
+            [tampered addObject:name];
+        }
+    });
 
     if (tampered.count == 0) {
         return @[];
     }
-    return @[[[ISCFinding alloc] initWithCode:ISCFindingCodeHookSelfIntegrity
-                                       detail:ISCSummarizeValues(tampered, ISCDetailLimit)]];
+    return @[ISCMakeFinding(ISCFindingCodeHookSelfIntegrity, ISCSummarizeValues(tampered, ISCDetailLimit))];
 }

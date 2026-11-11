@@ -22,7 +22,10 @@ NSArray<NSString *> *ISCTrustedSystemPrefixes(void) {
     ];
 }
 
-NSArray<NSString *> *ISCTrustedCodePrefixes(void) {
+/// Where non-cached OS code lives: the developer disk image and cryptexes. Deliberately not `/usr/lib/`
+/// on a device: every genuine library there is in the shared cache, and rootful tweak loaders install
+/// into it. The Simulator is different: it loads some of `/usr/lib/system/` from outside its cache.
+static NSArray<NSString *> *ISCTrustedCodePrefixes(void) {
     return @[
         @"/System/",
         @"/Developer/",
@@ -34,7 +37,38 @@ NSArray<NSString *> *ISCTrustedCodePrefixes(void) {
     ];
 }
 
-BOOL ISCAddressIsTrustedCode(const void *address, NSArray<NSString *> *extraTrustedPrefixes, NSString **outImagePath) {
+ISCCodeTrust ISCMakeCodeTrust(NSArray<NSString *> *extraPrefixes, ISCBundleTrust bundleTrust,
+                              NSArray<NSString *> *bundleLibraries, const void *trustedImageBase) {
+    NSMutableArray<NSString *> *prefixes = [NSMutableArray arrayWithArray:ISCTrustedCodePrefixes()];
+    [prefixes addObjectsFromArray:extraPrefixes];
+    return (ISCCodeTrust){
+        .codePrefixes = prefixes,
+        .bundleRoots = bundleTrust == ISCBundleTrustNone ? @[] : ISCAppBundleRoots(),
+        .bundleLibraries = [bundleLibraries copy],
+        .bundleTrust = bundleTrust,
+        .trustedImageBase = trustedImageBase,
+    };
+}
+
+/// Whether the bundle image at `path` is one `trust` admits. `path` is known to be inside the bundle.
+static BOOL ISCBundleImageIsTrusted(NSString *path, const ISCCodeTrust *trust) {
+    switch (trust->bundleTrust) {
+        case ISCBundleTrustNone:
+            return NO;
+        case ISCBundleTrustAll:
+            return YES;
+        case ISCBundleTrustListed:
+            for (NSString *name in trust->bundleLibraries) {
+                if (ISCPathHasComponentSuffix(path, name)) {
+                    return YES;
+                }
+            }
+            return NO;
+    }
+    return NO;
+}
+
+BOOL ISCAddressIsTrustedCode(const void *address, const ISCCodeTrust *trust, NSString **outImagePath) {
     *outImagePath = nil;
     NSString *path = nil;
     const void *base = NULL;
@@ -42,23 +76,26 @@ BOOL ISCAddressIsTrustedCode(const void *address, NSArray<NSString *> *extraTrus
         return NO;
     }
     *outImagePath = path;
+    if (trust->trustedImageBase != NULL && base == trust->trustedImageBase) {
+        return YES;
+    }
     if (ISCImageIsInSharedCache(base) || [path isEqualToString:@"/usr/lib/dyld"]) {
         return YES;
     }
-    NSMutableArray<NSString *> *trusted = [NSMutableArray arrayWithArray:ISCTrustedCodePrefixes()];
-    [trusted addObjectsFromArray:ISCAppBundleRoots()];
-    [trusted addObjectsFromArray:extraTrustedPrefixes];
-    return ISCPathMatchesAnyPrefix(path, trusted);
+    if (ISCPathMatchesAnyPrefix(path, trust->codePrefixes)) {
+        return YES;
+    }
+    return ISCPathMatchesAnyPrefix(path, trust->bundleRoots) && ISCBundleImageIsTrusted(path, trust);
 }
 
-BOOL ISCFunctionIsInlineHooked(const void *function, NSArray<NSString *> *extraTrustedPrefixes, NSString **outDestination) {
+BOOL ISCFunctionIsInlineHooked(const void *function, const ISCCodeTrust *trust, NSString **outDestination) {
     *outDestination = nil;
     const void *target = NULL;
     if (!ISCDecodeTrampoline(function, &target)) {
         return NO;
     }
     NSString *path = nil;
-    if (ISCAddressIsTrustedCode(target, extraTrustedPrefixes, &path)) {
+    if (ISCAddressIsTrustedCode(target, trust, &path)) {
         return NO;
     }
     *outDestination = path;

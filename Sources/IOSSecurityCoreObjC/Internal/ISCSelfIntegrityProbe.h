@@ -9,12 +9,15 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "ISCVisibility.h"
 #import "ISCFinding.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
+
 /// One `ISCFindingCodeHookSelfIntegrity` finding when any of `ISCSelfIntegrityTargets()` is implemented
-/// outside this package's image or starts with a branch out of it. Empty otherwise.
-NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void);
+/// outside this package's image or starts with a branch out of it, or when one of the package's own C
+/// functions (`ISCForEachSelfIntegrityFunction`) does. Empty otherwise.
+ISC_HIDDEN NSArray<ISCFinding *> *ISCSelfIntegrityFindings(void);
 
 NS_ASSUME_NONNULL_END

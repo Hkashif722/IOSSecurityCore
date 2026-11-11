@@ -49,6 +49,22 @@
 #define ISC_RUNTIME_NAME(name)
 #endif
 
+// MARK: - C symbol names
+//
+// The same switch renames the public C functions at the linker level, so their symbols do not name the
+// checks either. Every other C function in the package has hidden visibility and is never exported.
+
+#if ISC_SYMBOL_OBFUSCATION
+#define ISC_C_SYMBOL(name) __asm__("_" name)
+#else
+#define ISC_C_SYMBOL(name)
+#endif
+
+#define ISC_SN_PERFORM_SCAN       ISC_C_SYMBOL("Mx2nB8")
+#define ISC_SN_DEOBFUSCATE_BYTES  ISC_C_SYMBOL("Hv7cQ4")
+#define ISC_SN_STRING_FROM_BYTES  ISC_C_SYMBOL("Jd5kW1")
+#define ISC_SN_SECURE_ZERO        ISC_C_SYMBOL("Nr8pZ6")
+
 // Opaque runtime names. Replace them with your own random identifiers per product; they only have
 // to be unique and valid Objective-C class names.
 #define ISC_RN_FINDING            ISC_RUNTIME_NAME("Qk7xN2")

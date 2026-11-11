@@ -22,6 +22,9 @@ FORBIDDEN_SYMBOLS='_stat$|_lstat$|_fstat$|_fstatat$|_getattrlist$|_NSFileCreatio
 # Plain-text indicators that must not be visible to `strings`.
 FORBIDDEN_STRINGS='Cydia|Sileo|MobileSubstrate|frida|FridaGadget|SSLKillSwitch|libhooker|/var/jb|substitute|ShadowRuleset|ABypass|FlyJB|HTTPProxy|ProxyAutoConfig'
 
+# Exported symbols that would name the checks: the package's own C functions and Objective-C classes.
+EXPORTED_NAME_PATTERN='^_ISC[A-Z]|^_OBJC_(CLASS|METACLASS)_\$_ISC'
+
 if [ "$#" -gt 0 ]; then
     FILES=("$@")
 else
@@ -49,6 +52,14 @@ for file in "${FILES[@]}"; do
     if nm -u "$file" 2>/dev/null | grep -E "$FORBIDDEN_SYMBOLS" >/dev/null; then
         echo "FAIL  required-reason API imported by $file:"
         nm -u "$file" | grep -E "$FORBIDDEN_SYMBOLS" | sed 's/^/        /'
+        status=1
+    fi
+    # Internal C functions have hidden visibility and public ones opaque names: nothing exported may name a check.
+    # `private external` (hidden) symbols become local at link time and are stripped; only real exports count.
+    exported="$(nm -mgU "$file" 2>/dev/null | grep -v 'private external' | awk '{print $NF}' | grep -E "$EXPORTED_NAME_PATTERN" || true)"
+    if [ -n "$exported" ]; then
+        echo "FAIL  readable exported symbol in $file:"
+        echo "$exported" | sed 's/^/        /'
         status=1
     fi
     if strings -a "$file" | grep -E "$FORBIDDEN_STRINGS" >/dev/null; then

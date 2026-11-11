@@ -71,6 +71,25 @@ final class SecurityReportTests: XCTestCase {
         XCTAssertNil(nothingRequested.skipReason)
     }
 
+    func testAStoredSkipReasonSurvivesThreatFilteringAndAJSONRoundTrip() throws {
+        let skipped = SecurityReport(threats: [], performedChecks: [], startedAt: Date(timeIntervalSince1970: 1_000),
+                                     duration: 0, skipReason: .macRuntime)
+        XCTAssertTrue(skipped.wasSkipped, "the reason does not depend on the threats still being there")
+
+        let decoded = try JSONDecoder().decode(SecurityReport.self, from: JSONEncoder().encode(skipped))
+        XCTAssertEqual(decoded.skipReason, .macRuntime)
+        XCTAssertEqual(decoded, skipped)
+    }
+
+    func testJSONWrittenBeforeSkipReasonWasStoredStillDecodes() throws {
+        let withoutKey = #"{"threats":[],"performedChecks":[],"startedAt":1000,"duration":0}"#
+        XCTAssertNil(try JSONDecoder().decode(SecurityReport.self, from: Data(withoutKey.utf8)).skipReason)
+
+        let legacySkipped = #"{"threats":[{"kind":100,"category":"environment","severity":0,"identifier":"environment.simulator"}],"performedChecks":[],"startedAt":1000,"duration":0}"#
+        XCTAssertEqual(try JSONDecoder().decode(SecurityReport.self, from: Data(legacySkipped.utf8)).skipReason, .simulator,
+                       "an older report carries the reason only as a threat; decoding recovers it")
+    }
+
     // MARK: - Policies
 
     func testTheDefaultPolicyMatchesIsCompromised() {

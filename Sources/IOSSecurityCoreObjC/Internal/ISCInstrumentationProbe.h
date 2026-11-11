@@ -9,15 +9,17 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "ISCVisibility.h"
 #import "ISCFinding.h"
 #import "ISCScanOptions.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
+
 /// Findings for instrumentation frameworks, given the paths of every loaded image:
 /// - a loaded library matching the built-in names or `options.additionalSuspiciousLibraries`;
 /// - with built-in indicators on: `frida-server` on disk, a listener on its loopback port (when
 ///   `options.probesInstrumentationPorts`), and the threads its agent starts.
-NSArray<ISCFinding *> *ISCInstrumentationFindings(NSArray<NSString *> *loadedImages, ISCScanOptions *options);
+ISC_HIDDEN NSArray<ISCFinding *> *ISCInstrumentationFindings(NSArray<NSString *> *loadedImages, ISCScanOptions *options);
 
 NS_ASSUME_NONNULL_END

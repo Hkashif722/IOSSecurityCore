@@ -7,6 +7,7 @@
 //
 
 #import "ISCNetworkDetector.h"
+#import "ISCFindingSupport.h"
 #import "ISCDetector.h"
 #import "ISCObfuscation.h"
 
@@ -101,14 +102,7 @@ static NSArray<NSString *> *ISCConfiguredProxyKinds(void) {
 
 // MARK: - ISCNetworkDetector
 
-@interface ISCNetworkDetector () <ISCDetector>
-@end
-
 @implementation ISCNetworkDetector
-
-+ (ISCChecks)check {
-    return ISCChecksNetwork;
-}
 
 + (NSArray<NSString *> *)configuredProxyKinds {
     return ISCConfiguredProxyKinds();
@@ -118,16 +112,19 @@ static NSArray<NSString *> *ISCConfiguredProxyKinds(void) {
     return ISCProxyKindsInSettings(settings);
 }
 
-+ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
-    if (!ISCDetectorIsEnabled(self, options)) {
+NSArray<ISCFinding *> *ISCNetworkScan(ISCScanOptions *options) {
+    if (!ISCChecksInclude(options, ISCChecksNetwork)) {
         return @[];
     }
     NSArray<NSString *> *kinds = ISCConfiguredProxyKinds();
     if (kinds.count == 0) {
         return @[];
     }
-    return @[[[ISCFinding alloc] initWithCode:ISCFindingCodeNetworkProxy
-                                       detail:[kinds componentsJoinedByString:@", "]]];
+    return @[ISCMakeFinding(ISCFindingCodeNetworkProxy, [kinds componentsJoinedByString:@", "])];
+}
+
++ (NSArray<ISCFinding *> *)scanWithOptions:(ISCScanOptions *)options {
+    return ISCNetworkScan(options);
 }
 
 @end

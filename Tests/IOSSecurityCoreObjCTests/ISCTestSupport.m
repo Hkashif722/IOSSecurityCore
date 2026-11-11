@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 int ISCOpenLoopbackListener(uint16_t port) {
@@ -114,6 +115,14 @@ static NSData *ISCDEREncode(id object) {
         }
     } else if ([object isKindOfClass:NSData.class]) {
         ISCDERAppendElement(out, 0x04, object);
+    } else if ([object isKindOfClass:NSDate.class]) {
+        // GeneralizedTime, UTC, whole seconds: "YYYYMMDDHHMMSSZ".
+        time_t seconds = (time_t)[object timeIntervalSince1970];
+        struct tm utc;
+        gmtime_r(&seconds, &utc);
+        char text[16];
+        strftime(text, sizeof(text), "%Y%m%d%H%M%SZ", &utc);
+        ISCDERAppendElement(out, 0x18, [NSData dataWithBytes:text length:15]);
     } else if ([object isKindOfClass:NSArray.class]) {
         NSMutableData *content = [NSMutableData data];
         for (id item in object) {
@@ -128,7 +137,7 @@ static NSData *ISCDEREncode(id object) {
             [entry appendData:ISCDEREncode(object[key])];
             ISCDERAppendElement(content, 0x30, entry);
         }
-        ISCDERAppendElement(out, 0x31, content);
+        ISCDERAppendElement(out, 0xB0, content); // [16]: what Apple's signing emits for a dictionary
     }
     return out;
 }

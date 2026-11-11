@@ -47,6 +47,33 @@
     XCTAssertEqual(result.performedChecks, ISCChecksAll);
 }
 
+- (void)testTheCEntryPointAndListedBundleTrustRaiseNoFalsePositivesOnADevice {
+    if (!ISCEnvironment.isSupportedDevicePlatform) {
+        XCTSkip(@"Physical iOS devices only.");
+    }
+    // The path the Swift engine takes, with the narrowest trust: only one (absent) bundle library listed,
+    // so every system function must resolve into the OS itself.
+    ISCScanOptions *options = [ISCScanOptions defaultOptions];
+    options.allowedBundleLibraries = @[@"NothingWeShip.framework/NothingWeShip"];
+    ISCScanResult *result = ISCPerformScan(options);
+
+    NSMutableString *report = [NSMutableString string];
+    for (ISCFinding *finding in result.findings) {
+        [report appendFormat:@"%@\n", finding];
+    }
+    printf("[ISC device report, listed trust]\n%s[/ISC device report]\n", report.UTF8String);
+
+    XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeHookReboundSymbol), @"%@", report);
+    XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeHookInlinePatchedFunction), @"%@", report);
+    XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeHookSelfIntegrity), @"%@", report);
+    // On a stock device none of these can be true. (A debugger may be attached while testing, and the
+    // test runner's own frameworks are "unexpected bundle libraries" here, so those are not asserted.)
+    XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeJailbreakSandboxEscape), @"%@", report);
+    XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeJailbreakForkAllowed), @"%@", report);
+    XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeJailbreakArtifact), @"%@", report);
+    XCTAssertFalse(ISCContainsCode(result.findings, ISCFindingCodeHookInstrumentationLibrary), @"%@", report);
+}
+
 - (void)testRealSystemFunctionsAreNotInlineHookedOnADevice {
     if (!ISCEnvironment.isSupportedDevicePlatform) {
         XCTSkip(@"Physical iOS devices only.");
